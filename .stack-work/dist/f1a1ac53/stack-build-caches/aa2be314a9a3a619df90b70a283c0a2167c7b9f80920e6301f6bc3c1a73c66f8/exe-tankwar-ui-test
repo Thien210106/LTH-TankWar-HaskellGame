@@ -1,0 +1,32 @@
+C:\Users\gamat\AppData\Local\Programs\stack\x86_64-windows\ghc-9.4.8\lib\x86_64-windows-ghc-9.4.8\rts-1.0.2\include\ghcversion.h:
+  hash: 4bc88722407a89d1efbfa9c116cd4017af6ea3ff746643032b96cef62782f5dd
+? D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\.stack-work\dist\f1a1ac53\build\tankwar-ui-test\autogen\Paths_tankwar.hs
+: hash: 4389b8ac00ea6d78507a28af0f49c5e93b3988f053fd12e98fd5298444cc429a
+? D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\.stack-work\dist\f1a1ac53\build\tankwar-ui-test\autogen\cabal_macros.h
+: hash: ee34c043692d55550934d2c79a4e35c1c8547117286bd3b7718b04aaab0a6523
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\package.yaml:
+  hash: b599ae9b277827c1c6d1499b9179915a445953ec762549e2162dfb35fc5ccb5b
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Assets.hs:
+  hash: 48541d39694268a273e861eb1b57429420bec77053b221df55995622bd050c6e
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Common\Config.hs:
+  hash: e4aaace74b811d05944514ddc197831fed7139f77c8624e400c27c789d5bf255
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Common\Protocol.hs:
+  hash: 3efe38ccea25a52e73594a6383b8d86131980d358d8b6730b3c152f36a1fc069
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Common\Types.hs:
+  hash: 13ee04c0f0dd5d50e55385471b9c013566729e97fb0f65f151e06c934d5112e1
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Input.hs:
+  hash: 316963ffaf9e18bf68c1f52c231107eef5e06cb9481a30d1b9ae9628d8c8c3f2
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Render\Map.hs:
+  hash: f16341cabb25de8e852de197aa9bf1f1df6bf6dc8b3db955b74bd73a3e284154
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Render\Player.hs:
+  hash: c6a9dee928fc009c8e73d44ed797555420c01649f5198abf1ab2db9d1d0d3beb
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Render\UI.hs:
+  hash: 78853359dedb4dd3dcb4228d19c6cb774aabfd2cc1c470ead72b10a5d1671f24
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Sound.hs:
+  hash: f1b54b77bd4e7f416d1aaa1e83e52834e43ddd2ec45774c90660eedb0eb8b83a
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\src\Types.hs:
+  hash: b8aba44b80b992d909e96186625168981155c13d9bd7a417b19a0d179e374026
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\tankwar.cabal:
+  hash: c5c05b9a06858144ff8c61d7516fb592548d10f62762876c482fc65ef7101953
+D:\Users\gamat\Downloads\LTH-TankWar-HaskellGame-main\LTH-TankWar-HaskellGame-main\test\TestUI.hs:
+  hash: 78db672d6019e599d8be8b6b74c217d3ff598ed729fc62987d724788ff42e54c
