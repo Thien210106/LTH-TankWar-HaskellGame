@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111813">
+  <title>TankWar — Browser Edition</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" id="brand-home" aria-label="Về trang chủ">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span>TANK<span class="brand-accent">WAR</span><small>BROWSER EDITION</small></span>
+      </a>
+      <div class="topbar-right">
+        <span id="connection-pill" class="status-pill idle"><i></i><span id="connection-text">CHƯA KẾT NỐI SERVER</span></span>
+        <button class="icon-button" id="sound-toggle" type="button" title="Bật/tắt âm báo" aria-label="Bật tắt âm báo">♫</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="home-screen" class="screen home-layout">
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="eyebrow-line"></span> 2D MULTIPLAYER TANK COMBAT</div>
+          <h1>VÀO TRẬN.<br><span>ĐỪNG ĐỨNG YÊN.</span></h1>
+          <p class="hero-text">Điều khiển xe tăng, luồn qua mê cung và hạ đối thủ. Chơi thử ngay trong trình duyệt hoặc kết nối Haskell game server để đấu cùng bạn bè.</p>
+          <div class="hero-stats">
+            <div><strong>2–4</strong><span>NGƯỜI CHƠI</span></div>
+            <div><strong>WASD</strong><span>DI CHUYỂN</span></div>
+            <div><strong>60</strong><span>TICK / GIÂY*</span></div>
+          </div>
+        </div>
+        <div class="menu-card">
+          <div class="card-kicker">PLAYER TERMINAL / 01</div>
+          <h2>VÀO GAME</h2>
+          <label for="player-name">TÊN CHIẾN BINH</label>
+          <input id="player-name" type="text" maxlength="20" placeholder="Ví dụ: TankMaster" autocomplete="nickname" value="">
+          <div class="field-row">
+            <div class="field-grow">
+              <label for="server-url">HASKELL SERVER · WEBSOCKET</label>
+              <input id="server-url" type="url" value="ws://localhost:8080" spellcheck="false">
+            </div>
+          </div>
+          <button class="primary-button" id="online-button" type="button"><span>⌁</span> KẾT NỐI ONLINE <b>↗</b></button>
+          <button class="secondary-button" id="practice-button" type="button"><span>▶</span> CHƠI THỬ NGAY <small>OFFLINE</small></button>
+          <p class="fine-print">*Tốc độ tick theo cấu hình server. Chế độ offline là bản thực hành chạy cục bộ.</p>
+          <div id="home-error" class="inline-error" role="status" hidden></div>
+        </div>
+        <div class="hero-bottom"><span>TACTICAL ARENA / BUILD 0.2</span><span>HASKELL SERVER · HTML5 CANVAS CLIENT</span></div>
+      </section>
+
+      <section id="lobby-screen" class="screen lobby-screen" hidden>
+        <div class="page-heading">
+          <div><div class="eyebrow"><span class="eyebrow-line"></span> ONLINE OPERATIONS</div><h1>PHÒNG CHIẾN ĐẤU</h1><p id="lobby-subtitle">Đang đồng bộ với Haskell server.</p></div>
+          <button class="ghost-button" id="lobby-back" type="button">← TRANG CHỦ</button>
+        </div>
+        <div class="lobby-grid">
+          <section class="panel room-list-panel">
+            <div class="panel-heading"><div><span class="panel-index">01</span><h2>PHÒNG ĐANG MỞ</h2></div><button class="small-button" id="refresh-rooms" type="button">↻ LÀM MỚI</button></div>
+            <div id="room-list" class="room-list"><div class="empty-state"><span class="empty-icon">⌁</span><strong>CHƯA CÓ DỮ LIỆU</strong><small>Đang chờ danh sách phòng từ server…</small></div></div>
+            <div class="join-row"><div class="field-grow"><label for="join-id">MÃ PHÒNG</label><input id="join-id" type="text" maxlength="6" placeholder="ABC123" autocomplete="off"></div><div class="field-grow"><label for="join-password">MẬT KHẨU (NẾU CÓ)</label><input id="join-password" type="password" placeholder="Không bắt buộc"></div><button class="small-primary" id="join-button" type="button">VÀO PHÒNG →</button></div>
+          </section>
+          <section class="panel create-panel">
+            <div class="panel-heading"><div><span class="panel-index">02</span><h2>TẠO PHÒNG MỚI</h2></div></div>
+            <label for="room-name">TÊN PHÒNG</label><input id="room-name" type="text" maxlength="32" placeholder="Ví dụ: Đấu với bạn bè">
+            <label for="max-players">SỐ NGƯỜI CHƠI TỐI ĐA</label><select id="max-players"><option value="2">2 NGƯỜI</option><option value="3">3 NGƯỜI</option><option value="4" selected>4 NGƯỜI</option></select>
+            <label for="create-password">MẬT KHẨU <span class="label-muted">(TÙY CHỌN)</span></label><input id="create-password" type="password" maxlength="30" placeholder="Để trống nếu phòng công khai">
+            <button class="primary-button" id="create-button" type="button">＋ TẠO PHÒNG</button>
+            <div class="help-note"><span>ⓘ</span><p>Phải có ít nhất 2 người trong phòng mới bắt đầu được. Máy chủ quản lý trạng thái trận đấu; trình duyệt chỉ gửi điều khiển và vẽ khung hình.</p></div>
+          </section>
+        </div>
+        <div id="lobby-error" class="inline-error" role="status" hidden></div>
+      </section>
+
+      <section id="room-screen" class="screen room-screen" hidden>
+        <div class="page-heading compact-heading">
+          <div><div class="eyebrow"><span class="eyebrow-line"></span> READY ROOM</div><h1 id="room-title">PHÒNG CHIẾN ĐẤU</h1><p id="room-caption">Chờ thêm chiến binh.</p></div>
+          <div class="room-code"><small>MÃ PHÒNG</small><strong id="room-code">------</strong><button id="copy-room-code" class="copy-button" type="button" title="Sao chép mã phòng">⧉</button></div>
+        </div>
+        <div class="room-grid">
+          <div class="panel room-players-panel"><div class="panel-heading"><div><span class="panel-index">01</span><h2>ĐỘI HÌNH</h2></div><span id="players-counter" class="counter">1 / 4</span></div><div id="room-players" class="player-list"></div><div id="countdown-banner" class="countdown-banner" hidden></div><div class="room-actions"><button class="primary-button" id="start-button" type="button">▶ BẮT ĐẦU TRẬN</button><button class="ghost-button" id="leave-room" type="button">RỜI PHÒNG</button></div><div id="room-error" class="inline-error" role="status" hidden></div><p class="fine-print">Chỉ chủ phòng có quyền bắt đầu. Server yêu cầu tối thiểu 2 người.</p></div>
+          <div class="panel room-briefing"><div class="panel-heading"><div><span class="panel-index">02</span><h2>HƯỚNG DẪN TÁC CHIẾN</h2></div></div><div class="brief-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Di chuyển xe tăng</span></div><div class="brief-row"><span class="mouse-icon">⌖</span><span>Di chuyển chuột</span><span class="brief-detail">Xoay nòng pháo</span></div><div class="brief-row"><kbd>SPACE</kbd><span>Bắn đạn</span></div><div class="brief-row"><span class="weapon-icon">?</span><span>Hộp bí ẩn</span><span class="brief-detail">Buff vũ khí 15 giây</span></div><div class="briefing-map"><div class="map-glow"></div><span>ARENA<br><b>832 × 576</b></span></div></div>
+        </div>
+      </section>
+
+      <section id="game-screen" class="screen game-screen" hidden>
+        <div class="game-toolbar"><div class="match-label"><span class="live-dot"></span><span id="match-mode">LIVE MATCH</span><strong id="phase-label">ĐANG CHỜ</strong></div><div class="match-stats"><div><small>PHÒNG</small><strong id="match-room">OFFLINE</strong></div><div><small>NGƯỜI CHƠI</small><strong id="match-player-count">1</strong></div><div><small>ĐIỂM CỦA BẠN</small><strong id="match-score">0</strong></div></div><button id="exit-game" class="ghost-button" type="button">RỜI TRẬN ↗</button></div>
+        <div class="arena-layout">
+          <div class="arena-frame"><div class="arena-corner tl"></div><div class="arena-corner tr"></div><div class="arena-corner bl"></div><div class="arena-corner br"></div><canvas id="game-canvas" width="832" height="576" aria-label="Màn hình TankWar"></canvas><div id="arena-overlay" class="arena-overlay" hidden><div class="overlay-card"><span class="overlay-kicker">ROUND UPDATE</span><h2 id="overlay-title">SẴN SÀNG?</h2><p id="overlay-text">Trận đấu sẽ bắt đầu ngay.</p><button id="overlay-action" class="primary-button" type="button">TIẾP TỤC</button></div></div></div>
+          <aside class="match-sidebar">
+            <div class="panel sidebar-panel"><div class="panel-heading"><div><span class="panel-index">01</span><h2>BẢNG ĐIỂM</h2></div></div><div id="scoreboard" class="scoreboard"></div></div>
+            <div class="panel sidebar-panel weapon-panel"><div class="panel-heading"><div><span class="panel-index">02</span><h2>TRẠNG THÁI VŨ KHÍ</h2></div></div><div class="weapon-state"><div class="weapon-badge" id="weapon-symbol">●</div><div><strong id="weapon-name">ĐẠN THƯỜNG</strong><small id="weapon-timer">SẴN SÀNG</small></div></div><div class="cooldown-track"><span id="cooldown-fill"></span></div><p class="sidebar-help">Di chuyển bằng WASD · Ngắm bằng chuột · Bắn bằng click hoặc Space.</p></div>
+            <div class="panel sidebar-panel feed-panel"><div class="panel-heading"><div><span class="panel-index">03</span><h2>CHIẾN BÁO</h2></div></div><div id="event-feed" class="event-feed"><div class="feed-item muted">Đang chờ tín hiệu trận đấu…</div></div></div>
+          </aside>
+        </div>
+        <div class="mobile-controls-note">WASD: di chuyển · Di chuyển chuột: ngắm · Click/Space: bắn</div>
+      </section>
+    </main>
+    <footer class="site-footer"><span>© TANKWAR · BROWSER CLIENT</span><span>HASKELL / WEBSOCKET / HTML5 CANVAS</span><span id="fps-label">CLIENT READY</span></footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
