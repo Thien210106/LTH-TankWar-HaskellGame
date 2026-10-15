@@ -46,7 +46,7 @@ module Common.Types
 
 import Data.Text    (Text)
 import Data.Aeson   (ToJSON(..), FromJSON(..), genericToJSON, genericParseJSON,
-                     defaultOptions, fieldLabelModifier, constructorTagModifier,
+                     defaultOptions, Options, fieldLabelModifier, constructorTagModifier,
                      sumEncoding, SumEncoding(..))
 import GHC.Generics (Generic)
 import Data.Char    (toLower)

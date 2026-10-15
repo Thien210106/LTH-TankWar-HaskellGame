@@ -5,8 +5,8 @@
 (() => {
   'use strict';
 
-  const WORLD_W = 832;
-  const WORLD_H = 576;
+  let WORLD_W = 1344;
+  let WORLD_H = 704;
   const TANK_RADIUS = 15;
   const COLORS = {
     TankRed: '#ff655d', TankBlue: '#5ca9ff', TankGreen: '#8ae65e', TankYellow: '#ffd45d',
@@ -56,30 +56,367 @@
   let localGame = null;
   let lastOnlineUiUpdate = 0;
 
-  const mazeWalls = buildMazeWalls();
-  const maze = {
-    mazeWidth: WORLD_W,
-    mazeHeight: WORLD_H,
-    mazeWalls,
-    mazeSpawnPts: [{ vx: 96, vy: 96 }, { vx: 736, vy: 480 }, { vx: 736, vy: 96 }, { vx: 96, vy: 480 }],
-    mazeBoxSpawnPts: [{ vx: 256, vy: 288 }, { vx: 576, vy: 288 }, { vx: 416, vy: 128 }, { vx: 416, vy: 448 }, { vx: 416, vy: 288 }]
+  const SoundFX = {
+    init() {
+      if (!audioContext) {
+        try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) {}
+      }
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+    },
+    shoot(type) {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        if (type === 'LaserBullet') {
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(920, now);
+          osc.frequency.exponentialRampToValueAtTime(200, now + 0.12);
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+          osc.start(now); osc.stop(now + 0.12);
+        } else if (type === 'ShotgunBullet') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(250, now);
+          osc.frequency.exponentialRampToValueAtTime(50, now + 0.18);
+          gain.gain.setValueAtTime(0.14, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+          osc.start(now); osc.stop(now + 0.18);
+        } else if (type === 'GatlingBullet') {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(520, now);
+          osc.frequency.exponentialRampToValueAtTime(140, now + 0.05);
+          gain.gain.setValueAtTime(0.06, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+          osc.start(now); osc.stop(now + 0.05);
+        } else if (type === 'WallPiercingBullet') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(580, now);
+          osc.frequency.linearRampToValueAtTime(260, now + 0.14);
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+          osc.start(now); osc.stop(now + 0.14);
+        } else {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(400, now);
+          osc.frequency.exponentialRampToValueAtTime(100, now + 0.09);
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+          osc.start(now); osc.stop(now + 0.09);
+        }
+      } catch (_) {}
+    },
+    bounce() {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(750, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.035);
+        gain.gain.setValueAtTime(0.035, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+        osc.connect(gain); gain.connect(audioContext.destination);
+        osc.start(now); osc.stop(now + 0.035);
+      } catch (_) {}
+    },
+    explosion() {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(160, now);
+        osc.frequency.exponentialRampToValueAtTime(28, now + 0.35);
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        osc.connect(gain); gain.connect(audioContext.destination);
+        osc.start(now); osc.stop(now + 0.35);
+      } catch (_) {}
+    },
+    pickup() {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+          const t = audioContext.currentTime + i * 0.055;
+          const osc = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          osc.type = 'triangle';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.08, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+          osc.connect(gain); gain.connect(audioContext.destination);
+          osc.start(t); osc.stop(t + 0.1);
+        });
+      } catch (_) {}
+    },
+    countdown(seconds) {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        const isStart = Number(seconds) <= 0;
+        osc.type = 'sine';
+        osc.frequency.value = isStart ? 880 : 440;
+        gain.gain.setValueAtTime(0.09, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + (isStart ? 0.3 : 0.09));
+        osc.connect(gain); gain.connect(audioContext.destination);
+        osc.start(now); osc.stop(now + (isStart ? 0.3 : 0.09));
+      } catch (_) {}
+    },
+    victory() {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        [440, 554.37, 659.25, 880].forEach((freq, i) => {
+          const t = audioContext.currentTime + i * 0.09;
+          const osc = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          osc.type = 'triangle';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.1, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+          osc.connect(gain); gain.connect(audioContext.destination);
+          osc.start(t); osc.stop(t + 0.22);
+        });
+      } catch (_) {}
+    }
   };
 
-  function buildMazeWalls() {
-    const cs = 64, w = WORLD_W, h = WORLD_H;
-    const vec = (x, y) => ({ vx: x, vy: y });
+  let maze = generateRandomMaze();
+
+  function generateRandomMaze() {
+    // Kích thước thế giới bám theo device-width với lưới ô chuẩn cs = 64px (luôn gấp đôi xe tank: 30px * 2)
+    const winW = window.innerWidth || document.documentElement.clientWidth || 1344;
+    const winH = window.innerHeight || document.documentElement.clientHeight || 704;
+    const aspect = Math.max(1.3, Math.min(2.5, winW / winH));
+
+    const cs = 64; // 1 ô lưới = 64px = 2 xe tank (tankRadius = 15 => diameter = 30px)
+    const numRows = 11; // h = 704px
+    const h = numRows * cs;
+    const baseW = Math.round(h * aspect);
+    const numCols = Math.max(21, Math.round(baseW / cs));
+    const w = numCols * cs;
+    WORLD_W = w;
+    WORLD_H = h;
+
+    const vec = (x, y) => ({ vx: Math.round(x * cs), vy: Math.round(y * cs) });
     const wall = (x1, y1, x2, y2) => ({ wallStart: vec(x1, y1), wallEnd: vec(x2, y2) });
-    return [
-      wall(0, 0, w, 0), wall(w, 0, w, h), wall(w, h, 0, h), wall(0, h, 0, 0),
-      wall(2*cs, 3*cs, 4*cs, 3*cs), wall(5*cs, 3*cs, 7*cs, 3*cs),
-      wall(6*cs, 6*cs, 8*cs, 6*cs), wall(9*cs, 3*cs, 11*cs, 3*cs),
-      wall(3*cs, 2*cs, 5*cs, 2*cs), wall(8*cs, 2*cs, 10*cs, 2*cs),
-      wall(3*cs, 7*cs, 5*cs, 7*cs), wall(8*cs, 7*cs, 10*cs, 7*cs),
-      wall(2*cs, 1*cs, 2*cs, 3*cs), wall(11*cs, 1*cs, 11*cs, 3*cs),
-      wall(2*cs, 6*cs, 2*cs, 8*cs), wall(11*cs, 6*cs, 11*cs, 8*cs),
-      wall(6*cs, 4*cs, 6*cs, 5*cs), wall(7*cs, 4*cs, 7*cs, 5*cs),
-      wall(5*cs, 4.5*cs, 6*cs, 4.5*cs), wall(7*cs, 4.5*cs, 8*cs, 4.5*cs)
+
+    // 4 bức tường biên bao quanh chiến trường
+    const borderWalls = [
+      { wallStart: { vx: 0, vy: 0 }, wallEnd: { vx: w, vy: 0 } },
+      { wallStart: { vx: w, vy: 0 }, wallEnd: { vx: w, vy: h } },
+      { wallStart: { vx: w, vy: h }, wallEnd: { vx: 0, vy: h } },
+      { wallStart: { vx: 0, vy: h }, wallEnd: { vx: 0, vy: 0 } }
     ];
+
+    // Thuật toán sinh mê cung rối cả dọc lẫn ngang:
+    // 1. Tường cả dọc cả ngang đan xen nhau tạo góc L, T, ngã tư rối mắt, không song song
+    // 2. Luôn có khe hở thoát (mỗi ô luôn có ít nhất 2 lối đi, minDegree >= 2), không bao giờ bị bít kín
+    // 3. Toàn bộ mê cung 100% liên thông, không có ngõ cụt hiểm
+    // 4. Các đoạn tường được ghép nối thành tường dài
+    // 5. Khoảng cách giữa các tường luôn đúng 64px = 2 thân xe tank
+    const wallSet = new Set();
+    const cols = numCols, rows = numRows;
+
+    function isConnected() {
+      const visited = new Set();
+      const queue = [{ c: 0, r: 0 }];
+      visited.add('0,0');
+      while (queue.length > 0) {
+        const { c, r } = queue.shift();
+        if (r + 1 < rows && !wallSet.has('H:' + c + ',' + (r + 1))) {
+          const k = c + ',' + (r + 1); if (!visited.has(k)) { visited.add(k); queue.push({ c, r: r + 1 }); }
+        }
+        if (r - 1 >= 0 && !wallSet.has('H:' + c + ',' + r)) {
+          const k = c + ',' + (r - 1); if (!visited.has(k)) { visited.add(k); queue.push({ c, r: r - 1 }); }
+        }
+        if (c + 1 < cols && !wallSet.has('V:' + (c + 1) + ',' + r)) {
+          const k = (c + 1) + ',' + r; if (!visited.has(k)) { visited.add(k); queue.push({ c: c + 1, r }); }
+        }
+        if (c - 1 >= 0 && !wallSet.has('V:' + c + ',' + r)) {
+          const k = (c - 1) + ',' + r; if (!visited.has(k)) { visited.add(k); queue.push({ c: c - 1, r }); }
+        }
+      }
+      return visited.size === cols * rows;
+    }
+
+    function getMinDegree() {
+      let minD = 4;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          let deg = 0;
+          if (r + 1 < rows && !wallSet.has('H:' + c + ',' + (r + 1))) deg++;
+          if (r - 1 >= 0 && !wallSet.has('H:' + c + ',' + r)) deg++;
+          if (c + 1 < cols && !wallSet.has('V:' + (c + 1) + ',' + r)) deg++;
+          if (c - 1 >= 0 && !wallSet.has('V:' + c + ',' + r)) deg++;
+          if (deg < minD) minD = deg;
+        }
+      }
+      return minD;
+    }
+
+    const hCandidates = [];
+    for (let r = 1; r < rows; r++) {
+      for (let c = 1; c < cols - 2; c += 2) {
+        const len = 2 + Math.floor(Math.random() * 4);
+        const endC = Math.min(cols - 1, c + len);
+        if (endC - c >= 2) hCandidates.push({ type: 'H', x1: c, y1: r, x2: endC, y2: r });
+      }
+    }
+
+    const vCandidates = [];
+    for (let c = 1; c < cols; c++) {
+      for (let r = 1; r < rows - 2; r += 2) {
+        const len = 2 + Math.floor(Math.random() * 3);
+        const endR = Math.min(rows - 1, r + len);
+        if (endR - r >= 2) vCandidates.push({ type: 'V', x1: c, y1: r, x2: c, y2: endR });
+      }
+    }
+
+    hCandidates.sort(() => Math.random() - 0.5);
+    vCandidates.sort(() => Math.random() - 0.5);
+
+    const candidates = [];
+    const maxLen = Math.max(hCandidates.length, vCandidates.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (i < hCandidates.length) candidates.push(hCandidates[i]);
+      if (i < vCandidates.length) candidates.push(vCandidates[i]);
+    }
+
+    for (const cand of candidates) {
+      const addedEdges = [];
+      if (cand.type === 'H') {
+        for (let x = cand.x1; x < cand.x2; x++) {
+          const edge = 'H:' + x + ',' + cand.y1;
+          if (!wallSet.has(edge)) { wallSet.add(edge); addedEdges.push(edge); }
+        }
+      } else {
+        for (let y = cand.y1; y < cand.y2; y++) {
+          const edge = 'V:' + cand.x1 + ',' + y;
+          if (!wallSet.has(edge)) { wallSet.add(edge); addedEdges.push(edge); }
+        }
+      }
+      if (addedEdges.length > 0 && isConnected() && getMinDegree() >= 2) {
+        // Chấp nhận đoạn tường
+      } else {
+        // Hoàn tác để giữ khe hở và bảo đảm đường đi luôn thông suốt
+        for (const edge of addedEdges) wallSet.delete(edge);
+      }
+    }
+
+    // Hợp nhất các đoạn thẳng hàng liền kề thành tường dài mê cung
+    const innerWalls = [];
+    for (let r = 1; r < rows; r++) {
+      let start = null;
+      for (let c = 0; c <= cols; c++) {
+        if (c < cols && wallSet.has('H:' + c + ',' + r)) {
+          if (start === null) start = c;
+        } else {
+          if (start !== null) {
+            innerWalls.push(wall(start, r, c, r));
+            start = null;
+          }
+        }
+      }
+    }
+    for (let c = 1; c < cols; c++) {
+      let start = null;
+      for (let r = 0; r <= rows; r++) {
+        if (r < rows && wallSet.has('V:' + c + ',' + r)) {
+          if (start === null) start = r;
+        } else {
+          if (start !== null) {
+            innerWalls.push(wall(c, start, c, r));
+            start = null;
+          }
+        }
+      }
+    }
+
+    const mazeWalls = [...borderWalls, ...innerWalls];
+
+    // Các điểm spawn thoáng rộng tại tâm các ô hành lang (cách tường 32px)
+    const candidateSpawns = [];
+    for (let r = 0; r < rows; r += 2) {
+      for (let c = 1; c < cols; c += 3) {
+        candidateSpawns.push({ vx: Math.round((c + 0.5) * cs), vy: Math.round((r + 0.5) * cs) });
+      }
+    }
+
+    const mazeSpawnPts = candidateSpawns.filter(pt => {
+      return !innerWalls.some(w => pointWallDistance(pt, w) < 26);
+    }).sort(() => Math.random() - 0.5);
+
+    if (mazeSpawnPts.length < 4) {
+      mazeSpawnPts.push(
+        { vx: Math.round(1.5 * cs), vy: Math.round(0.5 * cs) },
+        { vx: Math.round((numCols - 1.5) * cs), vy: Math.round(0.5 * cs) },
+        { vx: Math.round(1.5 * cs), vy: Math.round((numRows - 0.5) * cs) },
+        { vx: Math.round((numCols - 1.5) * cs), vy: Math.round((numRows - 0.5) * cs) }
+      );
+    }
+
+    const mazeBoxSpawnPts = [
+      { vx: Math.round((numCols / 2) * cs), vy: Math.round(5.5 * cs) },
+      { vx: Math.round(numCols * 0.25 * cs), vy: Math.round(3.5 * cs) },
+      { vx: Math.round(numCols * 0.75 * cs), vy: Math.round(3.5 * cs) },
+      { vx: Math.round(numCols * 0.25 * cs), vy: Math.round(7.5 * cs) },
+      { vx: Math.round(numCols * 0.75 * cs), vy: Math.round(7.5 * cs) }
+    ].filter(pt => !innerWalls.some(w => pointWallDistance(pt, w) < 22));
+
+    if (mazeBoxSpawnPts.length === 0) {
+      mazeBoxSpawnPts.push({ vx: Math.round((numCols / 2) * cs), vy: Math.round(5.5 * cs) });
+    }
+
+    return { mazeWidth: w, mazeHeight: h, mazeWalls, mazeSpawnPts, mazeBoxSpawnPts };
+  }
+
+  function getRandomSpawnPoint(m, existingTanks = []) {
+    const spawns = (m && m.mazeSpawnPts) ? m.mazeSpawnPts : [];
+    const curW = (m && m.mazeWidth) ? m.mazeWidth : WORLD_W;
+    const curH = (m && m.mazeHeight) ? m.mazeHeight : WORLD_H;
+    const wallsToCheck = (m && m.mazeWalls) ? m.mazeWalls : (maze && maze.mazeWalls ? maze.mazeWalls : []);
+
+    for (let attempt = 0; attempt < 40; attempt++) {
+      let candidate;
+      if (attempt < spawns.length) {
+        candidate = { ...spawns[attempt] };
+      } else {
+        const randRow = Math.floor(Math.random() * 11);
+        const maxCol = Math.max(2, Math.floor(curW / 64) - 2);
+        const randCol = 1.5 + Math.random() * (maxCol - 1.5);
+        candidate = {
+          vx: Math.round(randCol * 64),
+          vy: Math.round((randRow + 0.5) * 64)
+        };
+      }
+      const tooCloseToWall = hitsWall(candidate, TANK_RADIUS + 3, true, wallsToCheck);
+      const tooCloseToTank = existingTanks.some(t => t.tankAlive && distance(t.tankPos, candidate) < 70);
+      if (!tooCloseToWall && !tooCloseToTank) return candidate;
+    }
+    if (spawns.length > 0) return { ...spawns[Math.floor(Math.random() * spawns.length)] };
+    return { vx: 96, vy: 32 };
   }
 
   function showScreen(name) {
@@ -126,6 +463,7 @@
     if (Object.prototype.hasOwnProperty.call(msg, 'contents')) return msg.contents;
     const keys = Object.keys(msg);
     if (keys.length === 1) return msg[keys[0]];
+    if (Object.prototype.hasOwnProperty.call(msg, 'tag')) return msg;
     return undefined;
   }
 
@@ -135,8 +473,16 @@
 
   function sendMessage(tag, contents) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    const message = { tag };
-    if (contents !== undefined) message.contents = contents;
+    let message;
+    if (tag === 'CPlayerInput') {
+      message = { tag, contents };
+    } else if (contents && typeof contents === 'object' && !Array.isArray(contents)) {
+      message = { tag, ...contents };
+    } else if (contents !== undefined) {
+      message = { tag, contents };
+    } else {
+      message = { tag };
+    }
     try { ws.send(JSON.stringify(message)); return true; }
     catch (error) { addFeed(`Không gửi được gói tin: ${error.message}`, 'warn'); return false; }
   }
@@ -240,6 +586,22 @@
         activeRoom = unwrapOne(data); isHost = true; onRoomReady(); break;
       case 'SRoomJoined':
         activeRoom = unwrapOne(data); isHost = false; onRoomReady(); break;
+      case 'SRoomRoster': {
+        const list = Array.isArray(data) ? data : (Array.isArray(unwrapOne(data)) ? unwrapOne(data) : []);
+        const hostName = readField(activeRoom, 'riHostPlayer') || (roomPlayerNames[0]?.host ? roomPlayerNames[0].name : username);
+        roomPlayerNames = list.map(item => {
+          const pName = Array.isArray(item) ? item[0] : (item.name || item.username || 'Người chơi');
+          const pColor = Array.isArray(item) ? item[1] : (item.color || 'TankBlue');
+          return {
+            name: pName,
+            color: pColor,
+            self: pName === username || pName === displayName,
+            host: pName === hostName || (isHost && (pName === username || pName === displayName))
+          };
+        });
+        renderRoomPlayers();
+        break;
+      }
       case 'SRoomError':
         setError(screenName === 'room' ? 'room-error' : 'lobby-error', stringPayload(data) || 'Thao tác phòng thất bại.');
         break;
@@ -263,6 +625,7 @@
         const seconds = Number(Array.isArray(data) ? data[0] : data);
         $('countdown-banner').hidden = false;
         $('countdown-banner').textContent = `TRẬN ĐẤU BẮT ĐẦU SAU ${Math.max(0, Math.ceil(seconds || 0))}…`;
+        SoundFX.countdown(seconds);
         break;
       }
       case 'SGameSnapshot': {
@@ -301,15 +664,21 @@
         const values = Array.isArray(data) ? data : [];
         const winner = values[0] || 'Chưa xác định';
         showOverlay('TRẬN ĐẤU KẾT THÚC', `${winner} là người chiến thắng chung cuộc.`, 'VỀ PHÒNG CHỜ', () => { hideOverlay(); if (mode === 'online' && activeRoom) sendMessage('CLeaveRoom'); else { showScreen('lobby'); sendMessage('CListRooms'); } });
-        addFeed(`Chiến thắng chung cuộc: ${winner}`, 'warn'); break;
+        addFeed(`Chiến thắng chung cuộc: ${winner}`, 'warn');
+        SoundFX.victory();
+        break;
       }
       case 'SKillEvent': {
         const pair = Array.isArray(data) ? data : [];
-        addFeed(`${pair[0] || 'Ai đó'} hạ ${pair[1] || 'đối thủ'}!`, 'warn'); break;
+        addFeed(`${pair[0] || 'Ai đó'} hạ ${pair[1] || 'đối thủ'}!`, 'warn');
+        SoundFX.explosion();
+        break;
       }
       case 'SMysteryBoxPickup': {
         const pair = Array.isArray(data) ? data : [];
-        addFeed(`${pair[0] || 'Người chơi'} nhặt hộp: ${weaponName(pair[1])}.`); break;
+        addFeed(`${pair[0] || 'Người chơi'} nhặt hộp: ${weaponName(pair[1])}.`);
+        SoundFX.pickup();
+        break;
       }
       case 'SLeaderboard':
         addFeed('Đã nhận bảng xếp hạng.'); break;
@@ -419,6 +788,8 @@
   }
 
   function startOffline() {
+    hideOverlay();
+    maze = generateRandomMaze();
     const enteredName = $('player-name').value.trim();
     username = enteredName || localStorage.getItem('tankwar-name') || 'TankPilot';
     displayName = username;
@@ -436,21 +807,24 @@
     statusPill('idle', 'CHẾ ĐỘ OFFLINE');
     updateMatchHeader(latestSnapshot); updateScoreboard(latestSnapshot); updateWeaponPanel(latestSnapshot);
     showScreen('game');
-    addFeed('Bắt đầu chế độ thực hành offline.');
+    addFeed('Bắt đầu chế độ thực hành offline với mê cung mới!');
   }
 
   function createLocalGame(name) {
-    const spawns = maze.mazeSpawnPts;
     const colors = ['TankRed','TankBlue','TankGreen','TankYellow'];
     const names = [name, 'CPU-ALPHA', 'CPU-BRAVO', 'CPU-DELTA'];
-    const tanks = names.map((n,i) => ({
-      tankId: n,
-      tankPos: { ...spawns[i] }, tankVel: { vx: 0, vy: 0 }, tankBodyAngle: 0,
-      tankTurretAngle: Math.PI, tankColor: colors[i],
-      tankWeapon: { wsCurrentWeapon: 'NormalBullet', wsBuffTimeLeft: 0, wsCooldownState: 'Ready' },
-      tankAlive: true, tankScore: 0, tankKills: 0,
-      _bot: i > 0, _cooldown: .8 + i * .45, _respawn: 0, _dirTimer: 0, _direction: Math.random() * Math.PI * 2
-    }));
+    const tanks = [];
+    names.forEach((n, i) => {
+      const sp = getRandomSpawnPoint(maze, tanks);
+      tanks.push({
+        tankId: n,
+        tankPos: { ...sp }, tankVel: { vx: 0, vy: 0 }, tankBodyAngle: 0,
+        tankTurretAngle: Math.PI, tankColor: colors[i],
+        tankWeapon: { wsCurrentWeapon: 'NormalBullet', wsBuffTimeLeft: 0, wsCooldownState: 'Ready' },
+        tankAlive: true, tankScore: 0, tankKills: 0,
+        _bot: i > 0, _cooldown: .8 + i * .45, _respawn: 0, _dirTimer: 0, _direction: Math.random() * Math.PI * 2
+      });
+    });
     return { name, tanks, bullets: [], boxes: [], lasers: [], time: 0, boxTimer: 10, fireCooldown: 0, lives: 5, score: 0, gameOver: false, kills: 0, wave: 1 };
   }
 
@@ -468,7 +842,7 @@
   }
 
   function updateOffline(dt) {
-    if (!localGame || localGame.gameOver) return;
+    if (!localGame || localGame.gameOver || isPaused) return;
     const g = localGame; g.time += dt; g.fireCooldown = Math.max(0,g.fireCooldown-dt);
     const player = g.tanks[0];
     if (!player.tankAlive) return;
@@ -487,7 +861,7 @@
     if (weapon.wsBuffTimeLeft<=0 && weapon.wsCurrentWeapon!=='NormalBullet') weapon.wsCurrentWeapon='NormalBullet';
     if (input.fire && g.fireCooldown<=0) {
       localShoot(player,player.tankTurretAngle,weapon.wsCurrentWeapon);
-      g.fireCooldown=weapon.wsCurrentWeapon==='NormalBullet'?1:2;
+      g.fireCooldown=weapon.wsCurrentWeapon==='NormalBullet'?0.5:1.0;
     }
     weapon.wsCooldownState = g.fireCooldown > 0 ? { tag: 'Reloading', contents: g.fireCooldown } : 'Ready';
     g.boxTimer -= dt;
@@ -499,11 +873,20 @@
     if (g.boxes.some(b=>distance(b.pos,player.tankPos)<23)) {
       g.boxes=[]; const special=['ShotgunBullet','LaserBullet','WallPiercingBullet','GatlingBullet'][Math.floor(Math.random()*4)];
       weapon.wsCurrentWeapon=special; weapon.wsBuffTimeLeft=15;
+      SoundFX.pickup();
       addFeed(`Nhặt Mystery Box: ${weaponName(special)} trong 15 giây!`);
     }
 
-    g.tanks.slice(1).forEach((bot,idx)=>{
-      if (!bot.tankAlive) { bot._respawn-=dt; if (bot._respawn<=0) { const sp=maze.mazeSpawnPts[idx+1]; bot.tankPos={...sp}; bot.tankAlive=true; bot._cooldown=1.2; } return; }
+    g.tanks.slice(1).forEach((bot)=>{
+      if (!bot.tankAlive) {
+        bot._respawn -= dt;
+        if (bot._respawn <= 0) {
+          bot.tankPos = getRandomSpawnPoint(maze, g.tanks);
+          bot.tankAlive = true;
+          bot._cooldown = 1.2;
+        }
+        return;
+      }
       bot._cooldown-=dt; bot._dirTimer-=dt;
       const toX=player.tankPos.vx-bot.tankPos.vx, toY=player.tankPos.vy-bot.tankPos.vy;
       const dist=Math.hypot(toX,toY)||1;
@@ -517,41 +900,138 @@
       if (bot._cooldown<=0 && dist<530) {localShoot(bot,Math.atan2(toY,toX),'NormalBullet');bot._cooldown=1.6+Math.random()*.8;}
     });
 
-    const internalWalls=mazeWalls.slice(4);
+    const curW = WORLD_W;
+    const curH = WORLD_H;
+    const internalWalls = (maze && maze.mazeWalls ? maze.mazeWalls : []).slice(4);
     g.bullets.forEach(b=>{
-      b.life-=dt; const nx=b.pos.vx+b.vel.vx*dt, ny=b.pos.vy+b.vel.vy*dt;
-      if (nx<5||nx>WORLD_W-5) {b.vel.vx*=-1;b.bounces++;b.pos.vx=clamp(nx,5,WORLD_W-5);} else b.pos.vx=nx;
-      if (ny<5||ny>WORLD_H-5) {b.vel.vy*=-1;b.bounces++;b.pos.vy=clamp(ny,5,WORLD_H-5);} else b.pos.vy=ny;
-      if (b.type!=='WallPiercingBullet' && internalWalls.some(w=>pointWallDistance(b.pos,w)<7)) b.life=0;
+      b.life-=dt;
+      const oldX=b.pos.vx, oldY=b.pos.vy;
+      const nextX=oldX+b.vel.vx*dt, nextY=oldY+b.vel.vy*dt;
+
+      // Nảy 4 cạnh biên (giữ đạn luôn ở trong chiến trường)
+      if (nextX<6) {b.vel.vx=Math.abs(b.vel.vx);b.pos.vx=6;b.bounces++;SoundFX.bounce();}
+      else if (nextX>curW-6) {b.vel.vx=-Math.abs(b.vel.vx);b.pos.vx=curW-6;b.bounces++;SoundFX.bounce();}
+      else {b.pos.vx=nextX;}
+
+      if (nextY<6) {b.vel.vy=Math.abs(b.vel.vy);b.pos.vy=6;b.bounces++;SoundFX.bounce();}
+      else if (nextY>curH-6) {b.vel.vy=-Math.abs(b.vel.vy);b.pos.vy=curH-6;b.bounces++;SoundFX.bounce();}
+      else {b.pos.vy=nextY;}
+
+      // Nảy tường nội bộ (Continuous Collision Detection - chống đạn xuyên tường)
+      if (b.type!=='WallPiercingBullet') {
+        const segStart={vx:oldX,vy:oldY}, segEnd={vx:b.pos.vx,vy:b.pos.vy};
+        for (const w of internalWalls) {
+          const hit=segmentIntersection(segStart,segEnd,w.wallStart,w.wallEnd);
+          const closeDist=pointWallDistance(b.pos,w);
+          if (hit || closeDist<7) {
+            const isHoriz=Math.abs(w.wallEnd.vx-w.wallStart.vx)>=Math.abs(w.wallEnd.vy-w.wallStart.vy);
+            if (isHoriz) {
+              b.vel.vy*=-1;
+              b.pos.vy=oldY<w.wallStart.vy?w.wallStart.vy-5:w.wallStart.vy+5;
+            } else {
+              b.vel.vx*=-1;
+              b.pos.vx=oldX<w.wallStart.vx?w.wallStart.vx-5:w.wallStart.vx+5;
+            }
+            b.bounces++;
+            SoundFX.bounce();
+            break;
+          }
+        }
+      }
       if (b.owner===player.tankId) {
         for (const bot of g.tanks.slice(1)) if (bot.tankAlive && distance(bot.tankPos,b.pos)<TANK_RADIUS+5) {
-          bot.tankAlive=false;bot._respawn=2.3;player.tankKills++;player.tankScore++;g.kills++;g.score+=100;b.life=0;addFeed(`${player.tankId} hạ ${bot.tankId}!`,'warn');break;
+          bot.tankAlive=false;bot._respawn=2.3;player.tankKills++;player.tankScore++;g.kills++;g.score+=100;b.life=0;
+          SoundFX.explosion();
+          addFeed(`${player.tankId} hạ ${bot.tankId}!`,'warn');break;
         }
       } else if (player.tankAlive && distance(player.tankPos,b.pos)<TANK_RADIUS+5) {
-        b.life=0;g.lives--;addFeed(`${b.owner} bắn trúng bạn. Còn ${g.lives} mạng!`,'warn');
-        if(g.lives<=0){g.gameOver=true;showOverlay('XE TĂNG BỊ HẠ','Bạn đã hết mạng. Hãy thử lại và dùng tường để che chắn.','CHƠI LẠI',()=>startOffline());}
-        else {player.tankPos={...maze.mazeSpawnPts[0]};}
+        b.life=0;g.lives--;
+        SoundFX.explosion();
+        addFeed(`${b.owner} bắn trúng bạn. Còn ${g.lives} mạng!`,'warn');
+        if(g.lives<=0){g.gameOver=true;showOverlay('XE TĂNG BỊ HẠ','Bạn đã hết mạng. Hãy thử lại và dùng tường để che chắn.','CHƠI LẠI',()=>{hideOverlay();startOffline();});}
+        else {player.tankPos=getRandomSpawnPoint(maze, g.tanks);}
       }
     });
-    g.bullets=g.bullets.filter(b=>b.life>0&&b.bounces<=4);
+    g.bullets=g.bullets.filter(b=>b.life>0&&b.bounces<=5);
     if (g.tanks.slice(1).every(t=>!t.tankAlive)) g.wave += dt;
   }
 
   function localShoot(tank, angle, type) {
     if (!localGame) return;
-    const origin={vx:tank.tankPos.vx+Math.cos(angle)*24,vy:tank.tankPos.vy+Math.sin(angle)*24};
-    const add=(a,speed=390)=>localGame.bullets.push({pos:{...origin},vel:{vx:Math.cos(a)*speed,vy:Math.sin(a)*speed},type,owner:tank.tankId,life:4,bounces:0});
-    if(type==='ShotgunBullet'){add(angle-.22,340);add(angle,365);add(angle+.22,340);}
-    else if(type==='GatlingBullet'){add(angle,410);add(angle+.04,410);}
-    else if(type==='LaserBullet'){add(angle,570);}
-    else if(type==='WallPiercingBullet'){add(angle,350);}
-    else add(angle,400);
+    SoundFX.shoot(type);
+    const dir = { vx: Math.cos(angle), vy: Math.sin(angle) };
+    const pStart = { ...tank.tankPos };
+    const maxOffset = 18;
+    const pEnd = { vx: pStart.vx + dir.vx * maxOffset, vy: pStart.vy + dir.vy * maxOffset };
+
+    // Kiểm tra an toàn: nếu xe tăng đứng tì sát tường, chặn đạn không spawn qua bên kia tường
+    const allWalls = (maze && maze.mazeWalls) ? maze.mazeWalls : [];
+    let earliestHit = null;
+    let hitWall = null;
+
+    for (const w of allWalls) {
+      const hit = segmentIntersection(pStart, pEnd, w.wallStart, w.wallEnd);
+      if (hit && (!earliestHit || hit.t < earliestHit.t)) {
+        earliestHit = hit;
+        hitWall = w;
+      }
+    }
+
+    let origin = pEnd;
+    let initialBounced = false;
+    let initialVelScale = { vx: 1, vy: 1 };
+
+    if (earliestHit && hitWall) {
+      const safeT = Math.max(0.05, earliestHit.t - 0.15);
+      origin = {
+        vx: pStart.vx + dir.vx * maxOffset * safeT,
+        vy: pStart.vy + dir.vy * maxOffset * safeT
+      };
+      if (type !== 'WallPiercingBullet') {
+        const isHoriz = Math.abs(hitWall.wallEnd.vx - hitWall.wallStart.vx) >= Math.abs(hitWall.wallEnd.vy - hitWall.wallStart.vy);
+        if (isHoriz) initialVelScale.vy = -1;
+        else initialVelScale.vx = -1;
+        initialBounced = true;
+        SoundFX.bounce();
+      }
+    }
+
+    const add = (a, speed = 390) => {
+      const vx = Math.cos(a) * speed * initialVelScale.vx;
+      const vy = Math.sin(a) * speed * initialVelScale.vy;
+      localGame.bullets.push({
+        pos: { ...origin },
+        vel: { vx, vy },
+        type,
+        owner: tank.tankId,
+        life: 4,
+        bounces: initialBounced ? 1 : 0
+      });
+    };
+
+    if (type === 'ShotgunBullet') { add(angle - 0.22, 340); add(angle, 365); add(angle + 0.22, 340); }
+    else if (type === 'GatlingBullet') { add(angle, 410); add(angle + 0.04, 410); }
+    else if (type === 'LaserBullet') { add(angle, 570); }
+    else if (type === 'WallPiercingBullet') { add(angle, 350); }
+    else add(angle, 400);
   }
 
-  function hitsWall(pos,radius,includeInner) {
-    if(pos.vx<radius||pos.vx>WORLD_W-radius||pos.vy<radius||pos.vy>WORLD_H-radius)return true;
-    const walls=includeInner?mazeWalls.slice(4):[];
-    return walls.some(w=>pointWallDistance(pos,w)<radius+3);
+  function segmentIntersection(p1, p2, p3, p4) {
+    const d = (p2.vx - p1.vx) * (p4.vy - p3.vy) - (p2.vy - p1.vy) * (p4.vx - p3.vx);
+    if (Math.abs(d) < 1e-7) return null;
+    const t = ((p3.vx - p1.vx) * (p4.vy - p3.vy) - (p3.vy - p1.vy) * (p4.vx - p3.vx)) / d;
+    const u = ((p3.vx - p1.vx) * (p2.vy - p1.vy) - (p3.vy - p1.vy) * (p2.vx - p1.vx)) / d;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+      return { t, pt: { vx: p1.vx + t * (p2.vx - p1.vx), vy: p1.vy + t * (p2.vy - p1.vy) } };
+    }
+    return null;
+  }
+
+  function hitsWall(pos, radius, includeInner, customWalls) {
+    if (pos.vx < radius || pos.vx > WORLD_W - radius || pos.vy < radius || pos.vy > WORLD_H - radius) return true;
+    const allW = customWalls || (maze && maze.mazeWalls ? maze.mazeWalls : []);
+    const walls = includeInner ? allW.slice(4) : [];
+    return walls.some(w => pointWallDistance(pos, w) < radius + 3);
   }
   function pointWallDistance(pos,wall) {
     const a=wall.wallStart,b=wall.wallEnd,px=pos.vx,py=pos.vy;
@@ -579,29 +1059,44 @@
   function stopRenderLoop(){if(animationId!==null){cancelAnimationFrame(animationId);animationId=null;} }
 
   function renderSnapshot(snapshot) {
-    ctx.clearRect(0,0,WORLD_W,WORLD_H);
-    drawGround();
+    resizeCanvasBacking();
+    ctx.save();
+    ctx.clearRect(0,0,canvas.width,canvas.height);
     const world=readField(snapshot,'wsMaze')||maze;
     const width=Number(readField(world,'mazeWidth')||WORLD_W),height=Number(readField(world,'mazeHeight')||WORLD_H);
-    drawWalls(readField(world,'mazeWalls')||mazeWalls,width,height);
+    const scaleX = canvas.width / width;
+    const scaleY = canvas.height / height;
+    ctx.scale(scaleX, scaleY);
+    drawGround(width, height);
+    drawWalls(readField(world,'mazeWalls')||(maze && maze.mazeWalls),width,height);
     const boxes=readField(snapshot,'wsMysteryBoxes')||[];
-    boxes.forEach(box=>{if(readField(box,'mbActive')!==false)drawBox(readField(box,'mbPos'));});
+    boxes.forEach(box=>{if(readField(box,'mbActive')!==false)drawBox(readField(box,'mbPos'),height);});
     (readField(snapshot,'wsLasers')||[]).forEach(laser=>drawLaser(readField(laser,'lsStart'),readField(laser,'lsEnd'),height));
     (readField(snapshot,'wsBullets')||[]).forEach(b=>drawBullet(b,height));
     (readField(snapshot,'wsTanks')||[]).forEach(t=>drawTank(t,height));
-    drawVignette();
+    drawVignette(width, height);
     if(mode==='offline'&&localGame){drawOfflineHud(localGame);}
+    ctx.restore();
   }
 
-  function drawGround(){
-    ctx.fillStyle='#1d3020';ctx.fillRect(0,0,WORLD_W,WORLD_H);
-    ctx.fillStyle='rgba(126,163,100,.035)';
-    for(let y=0;y<WORLD_H;y+=32)for(let x=0;x<WORLD_W;x+=32)if(((x/32+y/32)%2)===0)ctx.fillRect(x,y,32,32);
-    ctx.strokeStyle='rgba(167,205,137,.075)';ctx.lineWidth=1;
-    for(let x=0;x<=WORLD_W;x+=32){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,WORLD_H);ctx.stroke();}
-    for(let y=0;y<=WORLD_H;y+=32){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(WORLD_W,y);ctx.stroke();}
-    // Subtle worn ground flecks make the map less like an empty grid.
-    for(let i=0;i<55;i++){const x=(i*137+33)%WORLD_W,y=(i*79+19)%WORLD_H;ctx.fillStyle='rgba(182,208,143,.045)';ctx.fillRect(x,y,2,2);}
+  function drawGround(w = WORLD_W, h = WORLD_H){
+    ctx.fillStyle='#1d3020';ctx.fillRect(0,0,w,h);
+    ctx.fillStyle='rgba(126,163,100,.04)';
+    const tileSize = 32;
+    for(let y=0;y<h;y+=tileSize){
+      for(let x=0;x<w;x+=tileSize){
+        if(((Math.floor(x/tileSize)+Math.floor(y/tileSize))%2)===0)ctx.fillRect(x,y,tileSize,tileSize);
+      }
+    }
+    ctx.strokeStyle='rgba(167,205,137,.08)';ctx.lineWidth=1;
+    for(let x=0;x<=w;x+=tileSize){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+    for(let y=0;y<=h;y+=tileSize){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+    // Subtle worn ground flecks
+    const dotCount = Math.floor((w * h) / 10000);
+    for(let i=0;i<dotCount;i++){
+      const x=(i*157+33)%w,y=(i*97+19)%h;
+      ctx.fillStyle='rgba(182,208,143,.045)';ctx.fillRect(x,y,2,2);
+    }
   }
 
   function drawWalls(walls,width,height){
@@ -656,15 +1151,15 @@
     if(type==='LaserBullet'){ctx.fillRect(x-2,y-6,4,12);}else{ctx.beginPath();ctx.arc(x,y,type==='ShotgunBullet'?3.5:3,0,Math.PI*2);ctx.fill();}
     ctx.restore();
   }
-  function drawBox(pos){
-    if(!pos)return;const x=Number(readField(pos,'vx')||0),y=WORLD_H-Number(readField(pos,'vy')||0);
+  function drawBox(pos, height = WORLD_H){
+    if(!pos)return;const x=Number(readField(pos,'vx')||0),y=height-Number(readField(pos,'vy')||0);
     const im=images.box;
     ctx.save();ctx.shadowColor='#e8c95a';ctx.shadowBlur=12;
     if(im&&im.complete&&im.naturalWidth){ctx.drawImage(im,x-13,y-13,26,26);}else{ctx.fillStyle='#d3aa42';ctx.fillRect(x-11,y-11,22,22);ctx.fillStyle='#1c281b';ctx.font='bold 16px sans-serif';ctx.textAlign='center';ctx.fillText('?',x,y+6);}
     ctx.restore();
   }
   function drawLaser(a,b,height){if(!a||!b)return;const x1=Number(readField(a,'vx')||0),y1=height-Number(readField(a,'vy')||0),x2=Number(readField(b,'vx')||0),y2=height-Number(readField(b,'vy')||0);ctx.save();ctx.strokeStyle='#89faff';ctx.shadowColor='#89faff';ctx.shadowBlur=12;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();}
-  function drawVignette(){const grad=ctx.createRadialGradient(WORLD_W/2,WORLD_H/2,80,WORLD_W/2,WORLD_H/2,Math.max(WORLD_W,WORLD_H)*.75);grad.addColorStop(0,'rgba(0,0,0,0)');grad.addColorStop(1,'rgba(4,10,5,.33)');ctx.fillStyle=grad;ctx.fillRect(0,0,WORLD_W,WORLD_H);}
+  function drawVignette(w = WORLD_W, h = WORLD_H){const grad=ctx.createRadialGradient(w/2,h/2,80,w/2,h/2,Math.max(w,h)*.75);grad.addColorStop(0,'rgba(0,0,0,0)');grad.addColorStop(1,'rgba(4,10,5,.33)');ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);}
   function drawOfflineHud(g){ctx.save();ctx.fillStyle='rgba(7,13,8,.74)';ctx.fillRect(14,14,144,45);ctx.strokeStyle='rgba(199,243,107,.4)';ctx.strokeRect(14,14,144,45);ctx.fillStyle='#9caf94';ctx.font='8px "IBM Plex Mono",monospace';ctx.fillText('MẠNG CÒN LẠI',25,29);ctx.fillStyle='#c7f36b';ctx.font='bold 20px "Barlow Condensed",sans-serif';ctx.fillText('♥ '.repeat(Math.max(0,g.lives))+' '.repeat(Math.max(0,5-g.lives)),25,49);ctx.restore();}
 
   function updateMatchHeader(snapshot){
@@ -686,18 +1181,19 @@
     entries.forEach(e=>{const row=document.createElement('div');row.className='score-row';const dot=document.createElement('span');dot.className='score-dot';dot.style.background=COLORS[e.color]||'#c7f36b';const name=document.createElement('span');name.className='score-name';name.textContent=e.name+(e.alive?'':' · OUT');const score=document.createElement('strong');score.className='score-value';score.textContent=String(e.score);row.append(dot,name,score);root.append(row);});
   }
   function updateWeaponPanel(snapshot){
-    if(!snapshot)return;const tanks=readField(snapshot,'wsTanks')||[];
+    if(!snapshot||!$('weapon-name'))return;const tanks=readField(snapshot,'wsTanks')||[];
     const mine=tanks.find(t=>readField(t,'tankId')===username)||tanks.find(t=>readField(t,'tankId')===displayName)||tanks[0];if(!mine)return;
     const weapon=readField(mine,'tankWeapon')||{};const type=readField(weapon,'wsCurrentWeapon')||'NormalBullet';
     const buff=Number(readField(weapon,'wsBuffTimeLeft')||0);const cooldown=readField(weapon,'wsCooldownState');
-    $('weapon-name').textContent=weaponName(type).toUpperCase();$('weapon-symbol').textContent=weaponSymbol(type);
-    $('weapon-timer').textContent=buff>0?`BUFF CÒN ${buff.toFixed(1)}S`:cooldown==='Ready'||tagOf(cooldown)==='Ready'?'SẴN SÀNG':'ĐANG HỒI ĐẠN';
-    let ratio=1;if(typeof cooldown==='object'&&cooldown){const tag=tagOf(cooldown);if(tag==='Reloading'){const v=Array.isArray(cooldown.contents)?cooldown.contents[0]:cooldown.contents;ratio=1-clamp(Number(v||0)/2,0,1);}else if(tag==='GatlingBurst'){ratio=.65;}}
-    $('cooldown-fill').style.width=`${Math.round(ratio*100)}%`;
+    if($('weapon-name')) $('weapon-name').textContent=weaponName(type).toUpperCase();
+    if($('weapon-symbol')) $('weapon-symbol').textContent=weaponSymbol(type);
+    if($('weapon-timer')) $('weapon-timer').textContent=buff>0?`BUFF CÒN ${buff.toFixed(1)}S`:cooldown==='Ready'||tagOf(cooldown)==='Ready'?'SẴN SÀNG':'ĐANG HỒI ĐẠN';
+    let ratio=1;if(typeof cooldown==='object'&&cooldown){const tag=tagOf(cooldown);if(tag==='Reloading'){const v=Array.isArray(cooldown.contents)?cooldown.contents[0]:cooldown.contents;const maxCooldown=type==='NormalBullet'?0.5:1.0;ratio=1-clamp(Number(v||0)/maxCooldown,0,1);}else if(tag==='GatlingBurst'){ratio=.65;}}
+    if($('cooldown-fill')) $('cooldown-fill').style.width=`${Math.round(ratio*100)}%`;
   }
   function weaponName(type){return ({NormalBullet:'Đạn thường',ShotgunBullet:'Đạn chùm',LaserBullet:'Tia laser',WallPiercingBullet:'Đạn xuyên tường',GatlingBullet:'Đạn liên thanh'})[type]||String(type||'Đạn thường').replace('Bullet','');}
   function weaponSymbol(type){return ({NormalBullet:'●',ShotgunBullet:'✹',LaserBullet:'ϟ',WallPiercingBullet:'↗',GatlingBullet:'»'})[type]||'●';}
-  function addFeed(text,type=''){const root=$('event-feed');const row=document.createElement('div');row.className=`feed-item ${type}`;const time=new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});row.textContent=`[${time}] ${text}`;root.prepend(row);while(root.children.length>8)root.lastElementChild.remove();}
+  function addFeed(text,type=''){const root=$('event-feed');if(!root)return;const row=document.createElement('div');row.className=`feed-item ${type}`;const time=new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});row.textContent=`[${time}] ${text}`;root.prepend(row);while(root.children.length>8)root.lastElementChild.remove();}
 
   function showOverlay(title,text,buttonText,action){$('overlay-title').textContent=title;$('overlay-text').textContent=text;$('overlay-action').textContent=buttonText;roundOverlayAction=action;$('arena-overlay').hidden=false;}
   function hideOverlay(){$('arena-overlay').hidden=true;roundOverlayAction=null;}
@@ -717,20 +1213,74 @@
   document.addEventListener('keydown',e=>{
     if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
     setKey(e.key,true);
-    if(e.key==='Escape'&&screenName==='game')confirmExitGame();
+    if(e.key==='Escape'&&screenName==='game'){
+      e.preventDefault();
+      togglePauseModal();
+    }
   });
   document.addEventListener('keyup',e=>setKey(e.key,false));
   window.addEventListener('blur',()=>{input.up=input.down=input.left=input.right=input.fire=false;});
-  canvas.addEventListener('mousemove',e=>{const rect=canvas.getBoundingClientRect();input.mouseX=(e.clientX-rect.left)/rect.width*WORLD_W;input.mouseY=(e.clientY-rect.top)/rect.height*WORLD_H;});
-  canvas.addEventListener('mousedown',e=>{if(e.button===0){input.fire=true;}});
-  window.addEventListener('mouseup',e=>{if(e.button===0)input.fire=false;});
-  canvas.addEventListener('contextmenu',e=>e.preventDefault());
+  function getCurrentWorldDimensions() {
+    const world = (mode === 'online' && latestSnapshot) ? readField(latestSnapshot, 'wsMaze') : maze;
+    const w = Number(readField(world, 'mazeWidth') || WORLD_W);
+    const h = Number(readField(world, 'mazeHeight') || WORLD_H);
+    return { w, h };
+  }
 
-  function confirmExitGame(){showOverlay('RỜI TRẬN?',mode==='online'?'Bạn sẽ rời phòng online hiện tại.':'Bạn sẽ kết thúc lượt thực hành này.','RỜI TRẬN',()=>{hideOverlay();if(mode==='online'){sendMessage('CLeaveRoom');}else{localGame=null;showScreen('home');}});}
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    const dims = getCurrentWorldDimensions();
+    input.mouseX = (e.clientX - rect.left) / rect.width * dims.w;
+    input.mouseY = (e.clientY - rect.top) / rect.height * dims.h;
+  });
+  canvas.addEventListener('mousedown', e => { if (e.button === 0) { input.fire = true; } });
+  window.addEventListener('mouseup', e => { if (e.button === 0) input.fire = false; });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  let isPaused = false;
+  function showPauseModal() {
+    if (screenName !== 'game') return;
+    const modal = $('pause-modal');
+    if (!modal) return;
+    isPaused = true;
+    updatePauseSoundLabel();
+    modal.hidden = false;
+  }
+  function hidePauseModal() {
+    const modal = $('pause-modal');
+    if (!modal) return;
+    isPaused = false;
+    modal.hidden = true;
+  }
+  function togglePauseModal() {
+    if (screenName !== 'game') return;
+    const modal = $('pause-modal');
+    if (!modal) return;
+    if (modal.hidden) showPauseModal();
+    else hidePauseModal();
+  }
+  function updatePauseSoundLabel() {
+    const label = $('pause-sound-label');
+    if (label) label.textContent = soundEnabled ? 'BẬT' : 'TẮT';
+  }
+  function leaveCurrentMatch() {
+    hidePauseModal();
+    hideOverlay();
+    if (mode === 'online') {
+      if (activeRoom) sendMessage('CLeaveRoom');
+      closeSocket(false);
+      showScreen('lobby');
+    } else {
+      localGame = null;
+      showScreen('home');
+    }
+  }
 
   $('online-button').addEventListener('click',connectOnline);
+  $('player-name').addEventListener('keydown',e=>{if(e.key==='Enter')connectOnline();});
+  $('server-url').addEventListener('keydown',e=>{if(e.key==='Enter')connectOnline();});
   $('practice-button').addEventListener('click',startOffline);
-  $('brand-home').addEventListener('click',e=>{e.preventDefault();if(screenName==='game')confirmExitGame();else showScreen('home');});
+  $('brand-home').addEventListener('click',e=>{e.preventDefault();if(screenName==='game')togglePauseModal();else showScreen('home');});
   $('refresh-rooms').addEventListener('click',()=>{setError('lobby-error','');sendMessage('CListRooms');});
   $('create-button').addEventListener('click',createRoom);
   $('join-button').addEventListener('click',joinRoom);
@@ -739,10 +1289,31 @@
   $('start-button').addEventListener('click',()=>{setError('lobby-error','');if(!isHost){setError('lobby-error','Chỉ chủ phòng mới có thể bắt đầu.');return;}sendMessage('CStartGame');});
   $('leave-room').addEventListener('click',()=>{if(wsReady&&activeRoom)sendMessage('CLeaveRoom');else{activeRoom=null;showScreen('lobby');}});
   $('lobby-back').addEventListener('click',()=>{if(activeRoom)sendMessage('CLeaveRoom');else{closeSocket();showScreen('home');}});
-  $('exit-game').addEventListener('click',confirmExitGame);
+  $('pause-open-btn')?.addEventListener('click',togglePauseModal);
+  $('pause-resume-btn')?.addEventListener('click',hidePauseModal);
+  $('pause-leave-btn')?.addEventListener('click',leaveCurrentMatch);
+  $('pause-sound-btn')?.addEventListener('click',()=>{
+    soundEnabled=!soundEnabled;
+    $('sound-toggle').style.color=soundEnabled?'var(--lime)':'var(--muted)';
+    if(soundEnabled){SoundFX.init();SoundFX.pickup();}
+    updatePauseSoundLabel();
+  });
+  $('pause-fullscreen-btn')?.addEventListener('click',()=>{
+    if(!document.fullscreenElement){document.documentElement.requestFullscreen().catch(()=>{});}
+    else{document.exitFullscreen().catch(()=>{});}
+  });
+  $('exit-game')?.addEventListener('click',togglePauseModal);
   $('copy-room-code').addEventListener('click',async()=>{const code=$('room-code').textContent;try{await navigator.clipboard.writeText(code);$('copy-room-code').textContent='✓';setTimeout(()=>$('copy-room-code').textContent='⧉',900);}catch(_){$('join-id').value=code;}});
-  $('overlay-action').addEventListener('click',()=>{if(roundOverlayAction)roundOverlayAction();});
-  $('sound-toggle').addEventListener('click',()=>{soundEnabled=!soundEnabled;$('sound-toggle').style.color=soundEnabled?'var(--lime)':'var(--muted)';if(soundEnabled){try{audioContext=audioContext||new(window.AudioContext||window.webkitAudioContext)();const osc=audioContext.createOscillator(),gain=audioContext.createGain();osc.frequency.value=660;gain.gain.value=.025;osc.connect(gain);gain.connect(audioContext.destination);osc.start();osc.stop(audioContext.currentTime+.08);}catch(_){}}});
+  $('overlay-action').addEventListener('click',()=>{const action=roundOverlayAction;hideOverlay();if(action)action();});
+  $('sound-toggle').addEventListener('click',()=>{
+    soundEnabled=!soundEnabled;
+    $('sound-toggle').style.color=soundEnabled?'var(--lime)':'var(--muted)';
+    if(soundEnabled){
+      SoundFX.init();
+      SoundFX.pickup();
+    }
+    updatePauseSoundLabel();
+  });
 
   // Small defaults are remembered locally for the next session.
   $('player-name').value=localStorage.getItem('tankwar-name')||'';
@@ -751,11 +1322,68 @@
 
   // Start/stop the network input sender when the online game view is entered.
   const originalShowScreen=showScreen;
-  showScreen=function(name){originalShowScreen(name);if(name==='game'&&mode==='online')startInputSender();else stopInputSender();};
+  showScreen=function(name){
+    originalShowScreen(name);
+    if(name==='game'){
+      document.body.classList.add('in-game');
+      hidePauseModal();
+      resizeCanvasBacking();
+      setTimeout(resizeCanvasBacking,50);
+      setTimeout(resizeCanvasBacking,180);
+      if(mode==='online')startInputSender();
+    } else {
+      document.body.classList.remove('in-game');
+      hidePauseModal();
+      stopInputSender();
+      resizeCanvasBacking();
+    }
+  };
 
-  // Keep layout responsive by reserving the expected client logical canvas size.
-  function resizeCanvasBacking(){if(canvas.width!==WORLD_W)canvas.width=WORLD_W;if(canvas.height!==WORLD_H)canvas.height=WORLD_H;}
+  // Keep layout responsive by dynamically sizing canvas backing buffer to screen resolution.
+  function resizeCanvasBacking() {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dims = getCurrentWorldDimensions();
+    const targetW = Math.max(dims.w, Math.round(rect.width * dpr));
+    const targetH = Math.max(dims.h, Math.round(rect.height * dpr));
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+  }
+  window.addEventListener('resize', resizeCanvasBacking);
+  window.addEventListener('orientationchange', () => setTimeout(resizeCanvasBacking, 100));
   resizeCanvasBacking();
+
+  // Fullscreen toggle support
+  const fullscreenBtn = $('fullscreen-button');
+  if (fullscreenBtn) {
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      fullscreenBtn.textContent = document.fullscreenElement ? 'THU NHỎ 🗗' : '⛶ TOÀN MÀN HÌNH';
+      setTimeout(resizeCanvasBacking, 60);
+    });
+  }
+
+  // Touch screen support for responsive mobile/tablet play
+  function handleTouch(e) {
+    if (!e.touches.length) return;
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const dims = getCurrentWorldDimensions();
+    input.mouseX = (touch.clientX - rect.left) / rect.width * dims.w;
+    input.mouseY = (touch.clientY - rect.top) / rect.height * dims.h;
+  }
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); handleTouch(e); input.fire = true; }, { passive: false });
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); handleTouch(e); }, { passive: false });
+  window.addEventListener('touchend', () => { input.fire = false; });
 
   // Expose a small protocol diagnostic through the console for coursework debugging.
   window.TankWarClient={get mode(){return mode;},get connected(){return wsReady;},get room(){return activeRoom;},send:sendMessage};

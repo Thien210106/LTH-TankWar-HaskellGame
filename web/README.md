@@ -35,13 +35,13 @@ Online mode cần chạy server và MongoDB. Ở thư mục gốc dự án:
 2. Mở **một cửa sổ terminal khác** tại thư mục gốc dự án và khởi động Haskell server:
 
    ```powershell
-   stack exec tankwar-server -- --port 8080 --mongo-uri "mongodb://localhost:27017/tankwar_db"
+   stack exec tankwar-server -- --port 8080 --mongo-uri "mongodb://localhost:27017/TankWar"
    ```
 
    Hoặc dùng Cabal:
 
    ```powershell
-   cabal run tankwar-server -- --port 8080 --mongo-uri "mongodb://localhost:27017/tankwar_db"
+   cabal run tankwar-server -- --port 8080 --mongo-uri "mongodb://localhost:27017/TankWar"
    ```
 
 3. Mở `http://localhost:5173/web/`, nhập tên người chơi. Để server mặc định là `ws://localhost:8080`, rồi nhấn **KẾT NỐI ONLINE**.
@@ -53,12 +53,12 @@ Frontend gửi/nhận thông điệp theo dạng JSON tagged của `Aeson` trong
 
 Frontend tĩnh có thể triển khai từ riêng thư mục `web/` lên hosting HTTPS. Tuy nhiên, website HTTPS cần kết nối WebSocket bảo mật (`wss://`). Server Haskell trong repo đang mở WebSocket thường (`ws://`) trên cổng 8080; hãy đặt reverse proxy TLS hỗ trợ WebSocket trước server và nhập URL `wss://...` vào giao diện. Không nên mở trực tiếp cổng game ra Internet nếu chưa cấu hình mạng và firewall an toàn.
 
-## 3. Giới hạn hiện tại cần biết
+## 3. Tính năng & Cải tiến mới
 
-- Offline Practice là chế độ huấn luyện cục bộ để test giao diện và thao tác; bot/va chạm ở chế độ này là mô phỏng JavaScript, không phải game state authoritative của server.
-- Online mode dùng Haskell backend hiện tại. Nếu backend hoặc MongoDB chưa chạy, đăng nhập online sẽ thất bại; bạn vẫn có thể chơi offline.
-- Mã nguồn server chỉ gửi tên người chơi khi họ tham gia sau khi bạn đã vào phòng. Với người chơi đã ở trong phòng trước đó, giao diện phòng chờ tạm hiển thị slot chờ đồng bộ đến khi snapshot trận đấu bắt đầu. Muốn có danh sách roster đầy đủ ngay trong lobby, cần bổ sung thông điệp roster ở backend.
-- Phần server yêu cầu tối thiểu 2 người cho `CStartGame`; client hiện tuân thủ giới hạn này.
+- **Đồng bộ danh sách phòng chờ (Lobby Roster Sync):** Đã bổ sung gói tin `SRoomRoster` ở cả Haskell Server và Web Client. Người chơi vào sau sẽ lập tức nhận danh sách đầy đủ tất cả chiến binh kèm màu xe và chủ phòng.
+- **Hệ thống âm thanh Web Audio SoundFX:** Tổng hợp âm thanh procedural (tiếng súng riêng biệt cho 5 loại đạn, tiếng nảy tường, tiếng nổ xe tăng, tiếng nhặt hộp quà, âm thanh đếm ngược và nhạc chiến thắng), có nút bật/tắt tiện lợi `♫`.
+- **Offline Practice:** Chế độ huấn luyện cục bộ chạy ngay trên Canvas/JS với bot di chuyển và né vật cản, không cần cài đặt server hay database.
+- **Online Mode:** Kết nối WebSocket Authoritative tới Haskell Server (60 Tick/s), lưu trữ trận đấu trên MongoDB.
 
 ## 4. Ghi chú phát triển
 

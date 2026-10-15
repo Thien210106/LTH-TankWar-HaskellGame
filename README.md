@@ -1,13 +1,13 @@
-# 🎮 TankWar (Haskell Online Multiplayer Edition)
+# 🎮 TankWar (Haskell Backend & Web Browser Edition)
 
 [![Haskell](https://img.shields.io/badge/Language-Haskell-purple.svg?style=flat&logo=haskell)](https://www.haskell.org/)
 [![GHC](https://img.shields.io/badge/GHC-9.4%2B-5e5086.svg?style=flat)](https://www.haskell.org/ghc/)
-[![Frontend](https://img.shields.io/badge/Frontend-Gloss-informational.svg?style=flat)](https://hackage.haskell.org/package/gloss)
+[![Frontend](https://img.shields.io/badge/Frontend-HTML5%20Canvas%20%2F%20JS-orange.svg?style=flat&logo=javascript)](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API)
 [![Networking](https://img.shields.io/badge/Network-WebSockets%20%2F%20STM-green.svg?style=flat)](https://hackage.haskell.org/package/websockets)
 [![Database](https://img.shields.io/badge/Database-MongoDB-47A248.svg?style=flat&logo=mongodb)](https://www.mongodb.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](LICENSE)
 
-> Tựa game chiến thuật đối kháng xe tăng 2D góc nhìn từ trên xuống (top-down), được phát triển bằng ngôn ngữ lập trình thuần hàm **Haskell**. Lấy cảm hứng từ tựa game huyền thoại **Tank Trouble**, kết hợp cơ chế **Mystery Box (Hộp quà bí ẩn)** với hiệu lực **15 giây**, hệ thống **Multiplayer Client-Server qua Internet/LAN** với tính năng tạo phòng có mật khẩu, và cơ sở dữ liệu **MongoDB** quản lý toàn bộ dữ liệu trận đấu và người chơi.
+> Tựa game chiến thuật đối kháng xe tăng 2D góc nhìn từ trên xuống (top-down), kết hợp giữa **Haskell Authoritative Server** và **Web Browser Client (HTML5 Canvas)**. Lấy cảm hứng từ tựa game huyền thoại **Tank Trouble**, bổ sung cơ chế **Mystery Box (Hộp quà bí ẩn)** hiệu lực **15 giây**, hỗ trợ **Chơi thử Offline** ngay trên trình duyệt và **Chơi Online Multiplayer** qua WebSockets với hệ thống phòng chơi bảo mật, lưu trữ dữ liệu bền vững trên **MongoDB**.
 
 ---
 
@@ -15,14 +15,16 @@
 
 - [Giới thiệu](#-giới-thiệu)
 - [Điểm nổi bật & Tính năng](#-điểm-nổi-bật--tính-năng)
+- [Hai chế độ chơi: Offline & Online](#-hai-chế-độ-chơi-offline--online)
 - [Cơ chế Hộp quà Bí ẩn (?) & Hệ thống Vũ khí](#-cơ-chế-hộp-quà-bí-ẩn--hệ-thống-vũ-khí)
 - [Quản lý Game Logic & Vòng lặp trò chơi](#-quản-lý-game-logic--vòng-lặp-trò-chơi)
 - [Hệ thống Máy chủ & Quản lý Phòng (Lobby & Rooms)](#-hệ-thống-máy-chủ--quản-lý-phòng-lobby--rooms)
 - [Quản lý Dữ liệu với MongoDB](#-quản-lý-dữ-liệu-với-mongodb)
 - [Hướng dẫn điều khiển](#-hướng-dẫn-điều-khiển)
-- [Kiến trúc Công nghệ Haskell](#-kiến-trúc-công-nghệ-haskell)
+- [Kiến trúc Công nghệ](#-kiến-trúc-công-nghệ)
 - [Cấu trúc thư mục dự án](#-cấu-trúc-thư-mục-dự-án)
 - [Yêu cầu hệ thống & Hướng dẫn khởi chạy](#-yêu-cầu-hệ-thống--hướng-dẫn-khởi-chạy)
+- [Ghi chú triển khai Production (HTTPS / WSS)](#-ghi-chú-triển-khai-production-https--wss)
 - [Lộ trình phát triển (Roadmap)](#-lộ-trình-phát-triển-roadmap)
 - [Đóng góp & Giấy phép](#-đóng-góp--giấy-phép)
 
@@ -30,32 +32,55 @@
 
 ## 🎯 Giới thiệu
 
-Trong **TankWar**, mỗi người chơi điều khiển một chiếc xe tăng độc lập trên máy tính của riêng mình, cùng tham gia vào một trận chiến nảy lửa trong mê cung khép kín. Các phát bắn thông thường có khả năng nảy dội vật lý qua tường gạch, biến mỗi góc ngách thành một cái bẫy chết người nếu không tính toán góc bắn chuẩn xác.
+Trong **TankWar**, mỗi người chơi điều khiển một chiếc xe tăng chiến thuật trong mê cung khép kín kích thước chuẩn `832 × 576` pixel. Các phát đạn tiêu chuẩn có khả năng dội nảy vật lý qua các bức tường gạch, biến từng góc khuất thành cạm bẫy bất ngờ.
 
-Trò chơi nâng tầm trải nghiệm nhờ:
-
-1. **Chơi mạng đa nền tảng:** Kết nối các người chơi từ các máy tính khác nhau, bất kể ở trong cùng mạng LAN hay qua Internet thông qua Dedicated Server.
-2. **Hệ thống phòng tùy biến:** Tự do tạo phòng, tìm kiếm theo Room ID và thiết lập mật khẩu bảo vệ để đấu riêng với bạn bè.
-3. **Điều khiển linh hoạt:** Thân xe di chuyển bằng phím `WASD`, tháp pháo xoay 360° độc lập theo **con trỏ chuột**.
-4. **Cơ chế nạp đạn cân bằng:** Mỗi phát bắn có thời gian hồi (reset) là **1 giây**.
-5. **Hộp bí ẩn (`?`) kéo dài 15 giây:** Nhặt hộp quà để sở hữu đạn đặc biệt trong **15 giây** (bao gồm cả đạn Gatling xả loạt liên thanh 3 viên).
-6. **Lưu trữ dữ liệu với MongoDB:** Quản lý tài khoản, lịch sử trận đấu, bảng xếp hạng và số liệu thống kê.
+Phiên bản **Web Browser Edition** mang lại sự tiện lợi tối đa:
+- **Không cần cài đặt thư viện đồ họa máy bàn (như OpenGL/GLUT):** Chỉ cần mở trình duyệt web là có thể tham gia trận đấu.
+- **Client Web Canvas mượt mà:** Render vector và sprite thời gian thực ở 60 FPS, giao diện Tactical Sci-Fi hiện đại.
+- **Chơi thử Offline không cần server:** Người chơi có thể làm quen ngay với thao tác bắn, di chuyển và né đạn.
+- **Chơi Online đồng bộ thời gian thực:** Kết nối với Backend Haskell viết bằng Software Transactional Memory (STM) và WebSockets có độ trễ cực thấp.
 
 ---
 
 ## ✨ Điểm nổi bật & Tính năng
 
-- 🌐 **Online Multiplayer (Cross-Network / Internet & LAN):** Server Authoritative đồng bộ hóa trạng thái vật lý theo thời gian thực (60 Tick/s), loại bỏ tình trạng sai lệch trạng thái (desync).
-- 🏷️ **Quản lý phòng thông minh:**
-  - Tạo phòng mới hoặc tham gia phòng sẵn có.
-  - Tìm phòng nhanh chóng qua **Mã phòng (Room ID)** 6 ký tự.
-  - Hỗ trợ **Mật khẩu phòng (Password/Passcode)** cho phòng riêng tư.
-- ⏱️ **Cơ chế hồi đạn chuẩn xác:** Sau mỗi lần bắn, súng sẽ cần **1 giây reset cooldown** để sẵn sàng cho phát tiếp theo.
-- 🎯 **Điều khiển tách biệt (WASD + Chuột):** Thân xe di chuyển tự do bằng `WASD`, nòng pháo xoay tự do theo chuột để ngắm bắn chuẩn xác.
-- ❓ **Hộp bí ẩn (Mystery Box) 15 giây:** Phá hộp để nhận buff vũ khí cực mạnh tồn tại trong đúng **15 giây**, sau đó tự động trở về đạn thường.
-- 🎨 **Frontend thuần hàm với Gloss:** Giao diện vector mượt mà, sử dụng thư viện `gloss` của Haskell trên nền OpenGL.
-- 🍃 **Cơ sở dữ liệu MongoDB:** Tích hợp MongoDB để ghi nhận lịch sử trận đấu, số mạng hạ gục và bảng xếp hạng người chơi.
-- 🛡️ **An toàn đa luồng với STM:** Server Haskell xử lý hàng chục phòng chơi đồng thời bằng Software Transactional Memory mà không lo lỗi Race Condition.
+- 🌐 **Web Client thuần Canvas 2D:** Chạy trực tiếp trên mọi trình duyệt hiện đại (Chrome, Edge, Firefox, Safari), không cần cài đặt thêm runtime phụ.
+- ⚡ **Chế độ Offline Practice:** Tích hợp bộ mô phỏng vật lý ngay trong trình duyệt để huấn luyện và chơi thử mà không cần bật Server hay Database.
+- 🛡️ **Haskell Authoritative Server (Online Mode):** Toàn bộ trạng thái trận đấu, di chuyển, va chạm đạn - tường và hộp bí ẩn do Server tính toán ở tần số **60 Tick/s**, chống gian lận và sai lệch trạng thái (desync).
+- 🏷️ **Quản lý phòng linh hoạt:**
+  - Tạo phòng 2 đến 4 người chơi.
+  - Tham gia phòng nhanh bằng **Mã phòng (Room ID)** 6 ký tự.
+  - Hỗ trợ **Mật khẩu phòng** cho các trận đấu riêng tư giữa bạn bè.
+- 🎯 **Cơ chế điều khiển tách biệt (WASD + Chuột):**
+  - Thân xe tăng xoay và di chuyển bằng cụm phím `W / A / S / D`.
+  - Nòng pháo xoay tự do 360° theo con trỏ chuột.
+- ⏱️ **Cơ chế hồi đạn cân bằng (Cooldown):**
+  - Đạn thường: Hồi đạn **0.5 giây**, nảy tối đa **5 lần** qua tường gạch trước khi biến mất.
+  - Đạn đặc biệt Mystery Box: Hồi đạn **1.0 giây** (hoặc loạt 3 viên Gatling liên thanh).
+- 🧱 **Mê cung ngẫu nhiên mỗi trận (Random Labyrinth Maze):** Hệ thống tường dày đặc phong phú ngẫu nhiên thay đổi mỗi ván/round, vị trí hồi sinh xe tăng hoàn toàn ngẫu nhiên trên toàn bản đồ.
+- ❓ **Hộp bí ẩn (Mystery Box) 15 giây:** Bắn nổ hộp quà để nhận 1 trong 4 loại đạn nâng cấp với hiệu lực đúng **15 giây**.
+- 🍃 **Lưu trữ MongoDB:** Lưu thông tin hồ sơ tài khoản, lịch sử từng ván đấu và dữ liệu bảng xếp hạng.
+
+---
+
+## 🕹️ Hai chế độ chơi: Offline & Online
+
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│                        TRANG CHỦ / VÀO GAME                            │
+└───────────────────┬────────────────────────────────┬───────────────────┘
+                    │                                │
+     [CHƠI THỬ NGAY (OFFLINE)]              [KẾT NỐI ONLINE]
+                    │                                │
+                    ▼                                ▼
+┌──────────────────────────────────────┐  ┌──────────────────────────────────────┐
+│       Offline Practice Mode          │  │     Online WebSocket Multiplayer     │
+│ - Chạy hoàn toàn trên trình duyệt    │  │ - Kết nối ws://localhost:8080        │
+│ - Mô phỏng vật lý & bot bằng JS      │  │ - Máy chủ Haskell Authoritative 60Hz │
+│ - Thử nghiệm ngắm bắn & di chuyển    │  │ - Tạo / Tìm phòng có mã số & pass    │
+│ - Không cần MongoDB hay Server       │  │ - Lưu lịch sử trận vào MongoDB       │
+└──────────────────────────────────────┘  └──────────────────────────────────────┘
+```
 
 ---
 
@@ -63,227 +88,162 @@ Trò chơi nâng tầm trải nghiệm nhờ:
 
 ### 1. Thời gian hồi đạn tiêu chuẩn (Cooldown Reset)
 
-- **Thời gian hồi đạn:** **1.0 giây** cho mỗi lần bắn tiêu chuẩn.
-- Người chơi cần canh thời gian chính xác để không bị rơi vào thế bị động khi đối phương áp sát.
+- **Đạn thường (Normal Bullet):** Thời gian hồi **0.5 giây**, nảy tối đa **5 lần** qua tường gạch trước khi biến mất.
+- **Đạn đặc biệt:** Thời gian hồi **1.0 giây**.
+- Giao diện HUD trên web hiển thị thanh đo thời gian hồi (cooldown track) trực quan theo thời gian thực.
 
 ### 2. Sự kiện Hộp bí ẩn (Mystery Box)
 
-Hộp bí ẩn dấu hỏi vàng (`?`) xuất hiện ngẫu nhiên trong mê cung theo chu kỳ thời gian. Khi một người chơi bắn nổ hộp, xe tăng của người đó sẽ nhận được một loại đạn cường hóa có hiệu lực trong **15 giây**:
+Hộp quà dấu hỏi (`?`) ngẫu nhiên xuất hiện trong đấu trường sau mỗi 20–30 giây. Khi người chơi bắn nổ hộp, xe tăng nhận được đạn đặc biệt tồn tại trong **15.0 giây**:
 
 | Biểu tượng | Loại đạn | Cơ chế hoạt động & Hồi đạn |
 | :---: | :--- | :--- |
-| 💥 | **Đạn chùm (Shotgun / Triple Shot)** | Bắn ra **3 viên đạn cùng lúc** theo hình rẻ quạt. Góc dội rộng bao phủ không gian hẹp. Thời gian hồi sau phát bắn: **2 giây**. |
-| ⚡ | **Tia Laze (Laser Beam)** | Tia năng lượng phát xạ tức thì, tốc độ ánh sáng, phản xạ tức thời qua các vách tường gạch. Thời gian hồi: **2 giây**. |
-| 👻 | **Đạn xuyên tường (Wall-piercing Bullet)** | Bỏ qua các vách tường của mê cung, **bay xuyên thẳng qua vật cản** để tiêu diệt đối thủ đang ẩn nấp. Thời gian hồi: **2 giây**. |
-| 🚀 | **Đạn liên thanh (Gatling / Burst Fire)** | Bắn ra **liên thanh 3 viên liên tiếp** trong tích tắc (Burst of 3 rounds), sau đó mới **reset thời gian hồi (cooldown)** để nạp lại lượt bắn kế tiếp. |
+| 💥 | **Đạn chùm (Shotgun / Triple Shot)** | Bắn ra **3 viên đạn cùng lúc** theo hình rẻ quạt (góc tản ~14.3°). Phủ rộng góc hẹp. Hồi đạn: **1.0s**. |
+| ⚡ | **Tia Laser (Laser Beam)** | Năng lượng phát xạ tức thì, phản xạ tức thời qua tường tối đa **5 phân đoạn**. Hồi đạn: **1.0s**. |
+| 👻 | **Đạn xuyên tường (Wall-piercing Bullet)** | Bỏ qua các bức tường gạch của mê cung, **bay thẳng qua vật cản** để tiêu diệt đối phương. Hồi đạn: **1.0s**. |
+| 🚀 | **Đạn liên thanh (Gatling / Burst Fire)** | Xả liên tiếp **3 viên đạn** với giãn cách cực ngắn (0.12s/viên), sau đó bước vào thời gian hồi đạn **1.0s**. |
 
-> ⏳ **Hết thời hạn 15 giây:** Xe tăng tự động quay trở về loại đạn tiêu chuẩn với thời gian nạp đạn 1 giây.
+> ⏳ **Khi hết 15 giây:** Hệ thống tự động chuyển lại vũ khí về đạn tiêu chuẩn với thời gian nạp đạn 0.5 giây.
 
 ---
 
 ## ⚙️ Quản lý Game Logic & Vòng lặp trò chơi
 
-Mọi logic trận đấu được tính toán tập trung trên **Máy chủ (Authoritative Server)** để đảm bảo tính công bằng và đồng bộ tuyệt đối giữa các máy khách:
+Ở chế độ Online, toàn bộ tính toán được điều phối tập trung trên **Haskell Server**:
 
 ```text
  ┌────────────────────────────────────────────────────────────────────────┐
- │                     SERVER GAME LOOP (Tick Rate 60Hz)                  │
+ │                 HASKELL SERVER GAME LOOP (Tick Rate 60Hz)              │
  └──────────────────────────────────┬─────────────────────────────────────┘
                                     ▼
  ┌────────────────────────────────────────────────────────────────────────┐
- │ 1. INPUT PROCESSING: Nhận gói PlayerInput (W/A/S/D, Góc chuột, Click)  │
+ │ 1. INPUT PROCESSING: Nhận gói PlayerInput (W/A/S/D, Góc chuột, Shoot)  │
  ├────────────────────────────────────────────────────────────────────────┤
  │ 2. WEAPON & COOLDOWN LOGIC:                                            │
- │    - Kiểm tra cooldown còn lại (reset 2.0s).                           │
- │    - Nếu dùng Gatling: Kích hoạt Burst Queue (bắn 3 viên rồi cooldown).│
- │    - Cập nhật đếm ngược buff Mystery Box (15.0s -> 0.0s).              │
+ │    - Cập nhật thời gian hồi đạn (0.5s đạn thường, 1.0s đạn đặc biệt).  │
+ │    - Xử lý Gatling Burst Queue (bắn liên tiếp 3 viên rồi hồi đạn).     │
+ │    - Đếm ngược buff Mystery Box (15.0s -> 0.0s).                       │
  ├────────────────────────────────────────────────────────────────────────┤
  │ 3. MOVEMENT & PHYSICS:                                                 │
- │    - Cập nhật vận tốc, góc xoay thân và góc tháp pháo.                 │
+ │    - Cập nhật vận tốc, vị trí thân xe và góc nòng pháo.                │
  │    - Kiểm tra va chạm Tank - Tường (Sliding collision).                │
- │    - Cập nhật quỹ đạo đạn bay và góc phản xạ khi đụng tường gạch.      │
+ │    - Cập nhật quỹ đạo đạn, phản xạ đạn nảy khi chạm tường gạch.        │
  ├────────────────────────────────────────────────────────────────────────┤
  │ 4. COLLISION & COMBAT RESOLUTION:                                      │
- │    - Đạn trúng Xe tăng -> Người bị trúng nổ, cộng điểm người bắn.      │
- │    - Đạn trúng Mystery Box -> Phá hộp, trao buff 15s cho người bắn.    │
+ │    - Đạn trúng Xe tăng -> Người trúng đạn phát nổ, cộng điểm người bắn.│
+ │    - Đạn trúng Mystery Box -> Nhận ngẫu nhiên 1 trong 4 loại đạn (15s).│
  ├────────────────────────────────────────────────────────────────────────┤
- │ 5. BROADCAST: Gửi WorldSnapshot về toàn bộ Client để vẽ qua Gloss      │
+ │ 5. BROADCAST: Gửi WorldSnapshot (JSON) đến các Web Client qua WebSocket│
  └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Chi tiết các tầng logic quan trọng
+### Các trạng thái phòng đấu (Match State Machine)
 
-1. **State Machine của Trận đấu:**
-   - `LobbyState`: Người chơi tham gia phòng, chọn màu xe, chờ chủ phòng nhấn Bắt đầu.
-   - `CountdownState`: Đếm ngược 3 giây trước khi mở khóa điều khiển.
-   - `InGameState`: Giai đoạn giao tranh chính.
-   - `RoundEndState`: Xe tăng cuối cùng sống sót giành chiến thắng hiệp đấu. Sau 3 giây dọn mê cung mới.
-   - `MatchOverState`: Khi có người chơi đạt đủ số trận thắng quy định (ví dụ chạm mốc 5 điểm), ghi kết quả vào **MongoDB**.
-
-2. **Logic Nạp đạn & Cơ chế Gatling:**
-
-   ```haskell
-   -- Trích đoạn logic bắn súng và hồi đạn
-   data CooldownState
-     = Ready
-     | Reloading Float            -- Đếm ngược 1.0s
-     | GatlingBurst Int Float     -- Còn lại số viên trong loạt 3 viên và delay giữa các viên
-     deriving (Eq, Show)
-
-   data WeaponState = WeaponState
-     { currentWeapon :: BulletType
-     , buffTimeLeft  :: Float     -- Hiệu lực 15.0s của Mystery Box
-     , cooldownState :: CooldownState
-     }
-   ```
-
-3. **Logic Hộp quà Bí ẩn (15 giây):**
-   - Hộp quà xuất hiện tại ô ngã tư ngẫu nhiên sau mỗi 20–30 giây.
-   - Khi nhận sát thương từ đạn, hộp biến mất và kích hoạt bộ đếm `buffTimeLeft = 15.0`.
-   - Mỗi tick: `buffTimeLeft = max 0.0 (buffTimeLeft - dt)`. Khi chạm mốc `0.0`, chuyển `currentWeapon` về `NormalBullet`.
-
----
-
-## 🍃 Quản lý Dữ liệu với MongoDB
-
-Dự án sử dụng cơ sở dữ liệu NoSQL **MongoDB** (thông qua thư viện Haskell `mongoDB` và `bson`) để lưu trữ toàn bộ dữ liệu người dùng và lịch sử đối đầu.
-
-### 1. Kiến trúc Database
-
-- **Tên Database:** `tankwar_db`
-- **Mô hình kết nối:** Server duy trì connection pool tới MongoDB instance.
-
-### 2. Các Collection (Bảng dữ liệu) chính
-
-#### 👤 Collection `players` (Hồ sơ người chơi)
-
-```json
-{
-  "_id": "6524f1a2e3b1c90012ab34cd",
-  "username": "tank_master",
-  "displayName": "ProGamer99",
-  "createdAt": "2026-10-10T12:00:00Z",
-  "stats": {
-    "totalMatches": 42,
-    "wins": 28,
-    "kills": 135,
-    "deaths": 34,
-    "boxesCollected": 50
-  }
-}
-```
-
-#### 🏆 Collection `matches` (Lịch sử trận đấu)
-
-```json
-{
-  "_id": "6524f220e3b1c90012ab34ce",
-  "roomId": "TNK889",
-  "startTime": "2026-10-10T14:30:00Z",
-  "endTime": "2026-10-10T14:45:00Z",
-  "winner": "tank_master",
-  "players": [
-    { "username": "tank_master", "score": 5, "kills": 7 },
-    { "username": "ghost_rider", "score": 3, "kills": 4 }
-  ],
-  "roundsPlayed": 8
-}
-```
-
-#### 📊 Collection `leaderboards` (Bảng xếp hạng)
-
-- Tự động thống kê Top người chơi có điểm hạ gục (Kills) và tỷ lệ thắng (Win Rate) cao nhất.
+1. `LobbyState`: Người chơi tập hợp trong phòng, chọn cấu hình, chờ chủ phòng bắt đầu (yêu cầu tối thiểu 2 người).
+2. `CountdownState`: Đếm ngược 3 giây sẵn sàng vào trận.
+3. `InGameState`: Giai đoạn thi đấu chính (60 Tick/s).
+4. `RoundEndState`: Xác định xe sống sót cuối cùng, chờ 3 giây rồi sang hiệp tiếp theo.
+5. `MatchOverState`: Khi có người chơi đạt điểm thắng quy định (`winningScore = 5`), kết thúc trận và ghi nhận vào **MongoDB**.
 
 ---
 
 ## 🏠 Hệ thống Máy chủ & Quản lý Phòng (Lobby & Rooms)
 
-Máy chủ (`TankWar-Server`) chịu trách nhiệm tiếp nhận kết nối từ các máy khách (`TankWar-Client`), duy trì danh sách phòng đấu:
+Máy chủ (`tankwar-server`) quản lý danh sách phòng đa luồng, hỗ trợ người chơi truy cập từ mạng LAN hoặc Internet:
 
 ```text
                ┌──────────────────────────────────────┐
-               │         TANKWAR SERVER               │
-               │   (Quản lý Socket, Phòng, Logic, DB) │
+               │         TANKWAR HASKELL SERVER       │
+               │   (Port 8080: WebSockets + STM + DB) │
                └──────────────────┬───────────────────┘
                                   │
          ┌────────────────────────┼────────────────────────┐
          ▼                        ▼                        ▼
 ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
 │  Phòng #A8F2K1   │    │  Phòng #B4M9X2   │    │  Phòng #C1K7P0   │
-│  (Public - 4/4)  │    │ (Có Pass 🔒- 2/2)│    │ (Public - 1/2)   │
+│  (Công khai 4/4) │    │(Có Mật khẩu 2/2) │    │  (Chờ đấu 1/2)   │
 └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘
          │                       │                       │
-     Client 1,2,3,4          Client 5,6               Client 7
-   (Mạng Nhà / WAN)        (Mạng LAN A)             (Mạng 4G / WAN)
+   Trình duyệt 1..4         Trình duyệt 5..6        Trình duyệt 7
 ```
 
-- **Tạo phòng (Create Room):** Chọn số lượng người chơi tối đa (2-4 người), đặt tên phòng và thiết lập mật khẩu (tùy chọn). Hệ thống sẽ cấp một **Room ID** gồm 6 ký tự.
-- **Tìm & Tham gia phòng (Join by ID):** Nhập Room ID và mật khẩu (nếu phòng có bảo mật) để lập tức vào phòng chờ của bạn bè.
-- **Đồng bộ hóa Authoritative:** Server tính toán di chuyển, va chạm vật lý, đạn bay và vị trí hộp quà; Client gửi input và nhận snapshot để render qua Gloss.
+- **Tạo phòng (Create Room):** Chọn số người (2-4), đặt tên phòng và mật khẩu bảo mật (tùy chọn). Server tự sinh mã phòng 6 ký tự ngẫu nhiên.
+- **Vào phòng theo mã (Join Room):** Nhập mã 6 ký tự và mật khẩu tương ứng để vào thẳng phòng đấu.
+- **Bắt đầu trận đấu:** Chỉ chủ phòng (Host) có quyền bấm Bắt đầu khi phòng có từ 2 người chơi trở lên.
+
+---
+
+## 🍃 Quản lý Dữ liệu với MongoDB
+
+Dự án kết nối MongoDB (`TankWar`) thông qua thư viện Haskell `mongoDB` và `bson`:
+
+- **Collection `players`:** Hồ sơ người chơi, tổng số trận, số ván thắng, số mạng hạ gục (kills), số lần tử trận (deaths) và số hộp bí ẩn đã nhặt.
+- **Collection `matches`:** Lưu lại thông tin phòng, thời gian bắt đầu/kết thúc, người chiến thắng, điểm số từng người và số vòng đã chơi.
+- **Collection `leaderboards`:** Xếp hạng các tay súng xuất sắc nhất theo số mạng tiêu diệt và tỉ lệ thắng.
 
 ---
 
 ## 🕹️ Hướng dẫn điều khiển
 
-Mỗi máy tính là một người chơi độc lập kết nối vào phòng:
-
-| Thao tác | Phím / Thiết bị | Mô tả hành động |
+| Thao tác | Phím / Chuột | Mô tả hành động |
 | :---: | :---: | :--- |
 | **Di chuyển thân xe** | `W` / `A` / `S` / `D` | `W` (Tiến), `S` (Lùi), `A` (Rẽ trái), `D` (Rẽ phải) |
-| **Xoay nòng pháo** | **Con trỏ chuột** | Nòng pháo tự động quay 360° hướng về vị trí chuột trên màn hình |
-| **Khai hỏa (Bắn)** | **Chuột trái (LMB)** hoặc `Space` | Khai hỏa theo góc ngắm nòng pháo (Reset sau 1.0s, Gatling xả 3 viên liên thanh) |
-| **Tạm dừng / Menu** | `Esc` | Mở menu cài đặt / Rời phòng |
-| **Xem bảng điểm** | `Tab` | Hiển thị số mạng hạ gục (Kills) và tỷ số hiện tại |
+| **Xoay nòng pháo** | **Con trỏ chuột** | Nòng pháo tự động quay 360° theo vị trí chuột trên sàn đấu |
+| **Khai hỏa (Bắn)** | **Click chuột trái (LMB)** hoặc `Space` | Bắn theo hướng nòng pháo (Đạn thường hồi 1.0s, Gatling xả 3 viên liên thanh) |
+| **Rời trận / Menu** | `Esc` hoặc nút **RỜI TRẬN** | Mở menu tạm dừng hoặc rời ván đấu trở về trang chủ |
+| **Bật/Tắt âm thanh** | Nút **♫** trên thanh tiêu đề | Bật hoặc tắt hiệu ứng âm thanh cảnh báo |
 
 ---
 
-## 🛠️ Kiến trúc Công nghệ Haskell
+## 🛠️ Kiến trúc Công nghệ
 
-Hệ thống được module hóa thành các tầng xử lý riêng biệt:
+### 1. Backend (Haskell)
+- **Ngôn ngữ:** Haskell (GHC 9.4+).
+- **Web Framework / Networking:** `websockets` (truyền nhận gói tin real-time) kết hợp `aeson` (JSON format).
+- **Concurrency & State:** `stm` (Software Transactional Memory) với cấu trúc `TVar (Map RoomId RoomState)`, loại bỏ hoàn toàn race condition và deadlock.
+- **Database Driver:** `mongoDB` và `bson`.
 
-- **Frontend & Rendering:** Thư viện **`gloss`**
-  - Dựng hình vector 2D tốc độ cao, xử lý xoay nòng pháo theo chuột, render UI phòng chờ và HUD hiển thị đồng hồ buff 15s.
-- **Networking:** Thư viện **`websockets`**
-  - Giao tiếp thời gian thực, độ trễ thấp giữa Client và Server qua Internet / LAN.
-- **Database:** Thư viện **`mongoDB`** và **`bson`**
-  - Thực hiện các thao tác CRUD bất đồng bộ lưu trữ hồ sơ, lịch sử trận đấu và bảng xếp hạng.
-- **Concurrency & State Management:** **`stm`** (Software Transactional Memory)
-  - `TVar (Map RoomId RoomState)`: Quản lý danh sách phòng đa luồng, an toàn, không nghẽn khóa.
-- **Tuần tự hóa dữ liệu (Serialization):** Thư viện **`aeson`** (JSON) cho các gói tin mạng.
+### 2. Frontend (Web Browser Edition)
+- **Công nghệ cốt lõi:** HTML5, CSS3, JavaScript thuần (Vanilla JS), không cần bundler cồng kềnh.
+- **Renderer:** HTML5 Canvas API (832 × 576), hỗ trợ vẽ sprite xe tăng, nòng súng xoay động, tia laser phản xạ và hạt hiệu ứng.
+- **Giao diện:** Thiết kế Tactical Dark Theme, HUD hiển thị thời gian hồi đạn, thanh buff 15s và bảng chiến báo (Combat Log).
+- **Mạng phía Web:** `WebSocket` API bản địa của trình duyệt, tự động kết nối và xử lý thông điệp JSON tương thích với giao thức Haskell.
 
 ---
 
 ## 📁 Cấu trúc thư mục dự án
 
 ```text
-TankWar/
-├── common/                     -- Mã nguồn dùng chung giữa Client & Server
-│   ├── Protocol.hs             -- Định nghĩa gói tin ClientMessage, ServerMessage
-│   ├── Types.hs                -- Kiểu dữ liệu Tank, Bullet, MysteryBox, Maze
-│   └── Config.hs               -- Các hằng số (Cooldown 1s, Buff 15s, TickRate 60Hz)
+LTH-TankWar-HaskellGame-main/
+├── src/
+│   └── Common/
+│       ├── Config.hs           -- Hằng số trò chơi (TickRate 60, Cooldown 1s/2s, Buff 15s)
+│       ├── Protocol.hs         -- Giao thức mạng JSON (ClientMessage, ServerMessage)
+│       └── Types.hs            -- Kiểu dữ liệu Tank, Bullet, MysteryBox, Maze
 │
-├── server/                     -- Ứng dụng Server quản lý kết nối, game logic & DB
-│   ├── Main.hs                 -- Khởi chạy WebSocket Server & Kết nối MongoDB
-│   ├── Database/
-│   │   ├── Connection.hs       -- Thiết lập kết nối MongoDB Pool
-│   │   ├── PlayerRepo.hs       -- Thao tác CRUD thông tin người chơi, thống kê
-│   │   └── MatchRepo.hs        -- Lưu trữ kết quả trận đấu, lịch sử ván chơi
-│   ├── State.hs                -- Quản lý TVar chứa danh sách các Room và kết nối
-│   ├── RoomManager.hs          -- Xử lý tạo phòng, kiểm tra mật khẩu, tìm theo Room ID
-│   └── GameEngine.hs           -- Xử lý vòng lặp vật lý, đạn nảy, burst Gatling 3 viên, buff 15s
+├── server/
+│   ├── Main.hs                 -- Điểm khởi chạy WebSocket Server & kết nối MongoDB
+│   └── Server/
+│       ├── State.hs            -- Quản lý TVar chứa danh sách phòng và kết nối client
+│       ├── RoomManager.hs      -- Xử lý logic tạo phòng, mã phòng, mật khẩu
+│       ├── GameEngine.hs       -- Vòng lặp vật lý 60Hz, nảy đạn, Gatling 3 viên, buff 15s
+│       └── Database/
+│           ├── Connection.hs   -- Quản lý MongoDB Connection Pool
+│           ├── PlayerRepo.hs   -- Thao tác CRUD hồ sơ người chơi và thống kê
+│           └── MatchRepo.hs    -- Lưu trữ lịch sử kết quả trận đấu
 │
-├── client/                     -- Ứng dụng Client đồ họa Gloss cho mỗi máy
-│   ├── Main.hs                 -- Khởi chạy Gloss `play` & kết nối Socket Client
-│   ├── Network.hs              -- Luồng gửi PlayerInput & nhận WorldSnapshot
-│   ├── Input.hs                -- Bắt phím WASD và tính toán góc trỏ chuột
-│   ├── Render.hs               -- Dựng hình Gloss Picture (Xe, Nòng, Mê cung, Box)
-│   └── UI/
-│       ├── LobbyView.hs        -- Giao diện tạo phòng, nhập ID phòng và mật khẩu
-│       └── GameView.hs         -- Giao diện HUD trận đấu, thanh thời gian buff 15s
+├── web/                        -- Frontend Web Browser Client
+│   ├── index.html              -- Màn hình menu, phòng chờ (lobby) và sàn đấu canvas
+│   ├── style.css               -- Giao diện Tactical Sci-Fi, responsive
+│   ├── app.js                  -- Canvas Renderer, chế độ Offline & WebSocket Client
+│   ├── README.md               -- Hướng dẫn nhanh cho riêng web frontend
+│   └── assets/
+│       └── img/                -- Sprite xe tăng, đạn và hiệu ứng
 │
-├── package.yaml / TankWar.cabal
-├── stack.yaml
-└── README.md
+├── package.yaml                -- Cấu hình gói Haskell (Hpack)
+├── stack.yaml                  -- Cấu hình Stack toolchain
+├── tankwar.cabal               -- Cabal build file
+└── README.md                   -- Tài liệu dự án chính
 ```
 
 ---
@@ -292,73 +252,123 @@ TankWar/
 
 ### Yêu cầu tiên quyết
 
-- [GHC](https://www.haskell.org/ghc/) phiên bản >= 9.2
-- [Cabal](https://www.haskell.org/cabal/) hoặc [Stack](https://docs.haskellstack.org/)
-- **MongoDB** (Server chạy local hoặc Cloud MongoDB Atlas):
-  - Chạy local bằng Docker: `docker run -d -p 27017:27017 --name tankwar-mongo mongo:latest`
-- **Thư viện OpenGL / GLUT** (phục vụ đồ họa Gloss):
-  - **Ubuntu/Debian:** `sudo apt-get install freeglut3-dev`
-  - **macOS:** `brew install freeglut`
-  - **Windows:** Tích hợp sẵn trong GHCup / MSYS2.
+1. **Trình duyệt web:** Google Chrome, Microsoft Edge, Firefox hoặc Safari.
+2. **Một Static Web Server nhẹ:** Python 3 (`py -m http.server`) hoặc Live Server (VS Code) / `npx serve`.
+3. **Chơi Online (Haskell Server & Database):**
+   - [GHC](https://www.haskell.org/ghc/) phiên bản >= 9.2 (khuyên dùng qua [GHCup](https://www.haskell.org/ghcup/))
+   - [Stack](https://docs.haskellstack.org/) hoặc [Cabal](https://www.haskell.org/cabal/)
+   - [Docker](https://www.docker.com/) (để chạy MongoDB tiện lợi)
 
 ---
 
-### Hướng dẫn khởi chạy
+### Hướng dẫn 1: Chơi thử ngay chế độ Offline (Không cần Haskell hay MongoDB)
 
-#### 1. Khởi động Cơ sở dữ liệu MongoDB
+Chỉ cần một dòng lệnh mở web server:
 
-```bash
+```powershell
+# Chạy tại thư mục gốc của dự án
+py -m http.server 5173
+```
+
+Mở trình duyệt tại:
+```text
+http://localhost:5173/web/
+```
+
+Nhập tên chiến binh và nhấn **CHƠI THỬ NGAY (OFFLINE)** để trải nghiệm điều khiển xe tăng ngay lập tức.
+
+---
+
+### Hướng dẫn 2: Khởi chạy đầy đủ chế độ Online Multiplayer
+
+#### Bước 1: Khởi động Cơ sở dữ liệu MongoDB
+
+Chạy container MongoDB bằng Docker:
+
+```powershell
 docker run -d -p 27017:27017 --name tankwar-mongo mongo:latest
 ```
 
-#### 2. Khởi động Máy chủ (Dedicated Server)
+*(Nếu container đã tồn tại từ trước, chỉ cần chạy: `docker start tankwar-mongo`)*
 
-```bash
-# Sử dụng Cabal
-cabal run tankwar-server -- --port 8080 --mongo-uri "mongodb://localhost:27017/tankwar_db"
+#### Bước 2: Khởi động Haskell Dedicated Server
 
-# Hoặc sử dụng Stack
-stack exec tankwar-server -- --port 8080 --mongo-uri "mongodb://localhost:27017/tankwar_db"
+Mở một cửa sổ Terminal mới tại thư mục gốc dự án:
+
+```powershell
+# Sử dụng Stack (Khuyên dùng)
+stack exec tankwar-server -- --port 8080 --mongo-uri "mongodb://localhost:27017/TankWar"
+
+# Hoặc sử dụng Cabal
+cabal run tankwar-server -- --port 8080 --mongo-uri "mongodb://localhost:27017/TankWar"
 ```
 
-> 💡 **Mẹo chơi qua Internet:** Mở cổng (Port Forwarding cổng `8080`) hoặc sử dụng công cụ như `ngrok tcp 8080` để cung cấp địa chỉ IP/Domain công khai cho bạn bè.
+Khi server sẵn sàng, terminal sẽ thông báo lắng nghe tại cổng `8080` và kết nối thành công tới MongoDB.
 
-#### 3. Khởi chạy Client cho từng người chơi
+#### Bước 3: Mở Web Client & Kết nối
 
-Mỗi người chơi mở một cửa sổ game trên máy của mình:
+1. Mở trình duyệt tại `http://localhost:5173/web/`.
+2. Nhập tên của bạn, giữ nguyên địa chỉ WebSocket `ws://localhost:8080`.
+3. Nhấn **KẾT NỐI ONLINE**.
+4. Người chơi 1 bấm **TẠO PHÒNG MỚI**, sau đó gửi **Mã phòng** (ví dụ `TNK889`) cho bạn bè.
+5. Người chơi 2 mở trình duyệt (hoặc máy tính khác cùng mạng), nhập mã phòng và bấm **VÀO PHÒNG**.
+6. Khi đủ từ 2 người trở lên, chủ phòng nhấn **BẮT ĐẦU TRẬN** để chiến đấu!
 
-```bash
-# Sử dụng Cabal
-cabal run tankwar-client -- --host <IP_HOAC_DOMAIN_SERVER> --port 8080
+---
 
-# Hoặc sử dụng Stack
-stack exec tankwar-client -- --host 127.0.0.1 --port 8080
+### Hướng dẫn 3: Khởi chạy 1 lệnh duy nhất với Docker Compose
+
+Nếu máy đã cài Docker Desktop, bạn có thể khởi chạy đồng thời MongoDB + Haskell Server + Nginx Web:
+
+```powershell
+docker compose up --build
 ```
 
-#### 4. Quy trình tạo & Vào phòng trong Game
+Trang game sẽ sẵn sàng ngay tại: `http://localhost:5173/web/`.
 
-1. Tại màn hình chính, chọn **Create Room** (Tạo phòng): đặt số người chơi (2-4) và nhập mật khẩu nếu muốn bảo mật.
-2. Sao chép **Room ID** (ví dụ: `TNK889`) gửi cho bạn bè.
-3. Người chơi khác chọn **Join Room**, nhập `TNK889` cùng mật khẩu để tham gia.
-4. Khi các người chơi đã sẵn sàng, trận đấu lập tức bắt đầu!
+---
+
+### 🧪 Chạy bộ kiểm thử tự động (Automated Unit Tests)
+
+Dự án tích hợp bộ test tự động kiểm tra Vector math, Cooldown vũ khí và tính toàn vẹn gói tin JSON Protocol:
+
+```powershell
+# Chạy toàn bộ 16 test cases bằng Cabal
+cabal test
+```
+
+---
+
+## 🔒 Ghi chú triển khai Production (HTTPS / WSS)
+
+- **Frontend tĩnh:** Có thể deploy thư mục `web/` lên bất kỳ dịch vụ hosting tĩnh nào như Vercel, Netlify, Cloudflare Pages hoặc GitHub Pages.
+- **WebSocket bảo mật:** Khi web client được phân phối qua giao thức HTTPS, trình duyệt bắt buộc phải kết nối WebSocket bảo mật (**`wss://`**).
+- Để triển khai Server ra Internet:
+  1. Cấu hình Nginx / Caddy làm Reverse Proxy với chứng chỉ SSL/TLS miễn phí (Let's Encrypt).
+  2. Proxy đường truyền WebSocket từ cổng 443 về cổng nội bộ `8080` của Haskell Server.
+  3. Người chơi nhập URL dạng `wss://yourdomain.com` vào ô cấu hình server trên web.
 
 ---
 
 ## 🗺️ Lộ trình phát triển (Roadmap)
 
-- [x] Thiết kế mô hình Client-Server với WebSocket và Gloss 2D.
-- [x] Cơ chế điều khiển thân xe WASD + nòng xoay tự do theo chuột.
-- [x] Hệ thống phòng (Room ID, Password, Tạo và Tham gia phòng).
-- [x] Tích hợp cơ sở dữ liệu MongoDB quản lý người chơi và lịch sử đối đầu.
-- [x] Thiết lập thời gian hồi đạn 2 giây và đạn Gatling bắn loạt 3 viên.
-- [x] Hộp bí ẩn `?` ban tặng 4 loại đạn đặc biệt trong thời gian 15 giây.
-- [ ] Tính năng Chat nhanh trong phòng chờ (In-game Lobby Chat).
-- [ ] Bảng xếp hạng trực tiếp trong game (In-game Leaderboard).
+- [x] Chuyển đổi giao diện sang nền tảng **Web Browser (HTML5 Canvas)** tiện lợi, không phụ thuộc OpenGL/GLUT.
+- [x] Chế độ **Offline Practice** giúp người chơi làm quen thao tác ngay trong trình duyệt.
+- [x] Hệ thống âm thanh **Web Audio SoundFX** (tiếng súng riêng từng loại đạn, nổ, nảy tường, nhặt hộp, đếm ngược).
+- [x] Đồng bộ hóa danh sách phòng chờ hoàn chỉnh (**Lobby Roster Sync** qua `SRoomRoster`).
+- [x] Cơ chế điều khiển thân xe WASD + nòng pháo xoay 360° theo chuột.
+- [x] Hệ thống phòng (Room ID 6 ký tự, Mật khẩu, Tạo & Tham gia phòng).
+- [x] Server Authoritative xử lý vật lý 60Hz bằng Haskell STM.
+- [x] Tích hợp cơ sở dữ liệu MongoDB lưu trữ hồ sơ, lịch sử trận đấu và điểm số.
+- [x] Bộ kiểm thử tự động (**16/16 Unit Tests**) kiểm tra toán học vector và giao thức mạng.
+- [x] Đóng gói container hóa toàn diện với **Dockerfile** & **docker-compose.yml**.
+- [ ] Tính năng Chat thời gian thực trong phòng chờ (In-game Lobby Chat).
+- [ ] Bảng xếp hạng trực tiếp trong game (Live In-game Leaderboard modal).
 
 ---
 
 ## 🤝 Đóng góp & Giấy phép
 
-Mọi đóng góp, báo cáo lỗi (Issue) hoặc đề xuất tính năng mới (Pull Request) đều được chào đón!
+Mọi đóng góp, báo cáo lỗi (Issue) hoặc đề xuất tính năng mới (Pull Request) đều được hoan nghênh!
 
 Dự án được phân phối dưới giấy phép **MIT License**. Chi tiết xem tại tệp [LICENSE](LICENSE).

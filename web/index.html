@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111813">
   <title>TankWar — Browser Edition</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
   <div class="app-shell">
@@ -15,7 +15,7 @@
         <span>TANK<span class="brand-accent">WAR</span><small>BROWSER EDITION</small></span>
       </a>
       <div class="topbar-right">
-        <span id="connection-pill" class="status-pill idle"><i></i><span id="connection-text">CHƯA KẾT NỐI SERVER</span></span>
+        <span id="connection-pill" class="status-pill idle"><i></i><span id="connection-text">SẴN SÀNG KẾT NỐI</span></span>
         <button class="icon-button" id="sound-toggle" type="button" title="Bật/tắt âm báo" aria-label="Bật tắt âm báo">♫</button>
       </div>
     </header>
@@ -86,20 +86,68 @@
       </section>
 
       <section id="game-screen" class="screen game-screen" hidden>
-        <div class="game-toolbar"><div class="match-label"><span class="live-dot"></span><span id="match-mode">LIVE MATCH</span><strong id="phase-label">ĐANG CHỜ</strong></div><div class="match-stats"><div><small>PHÒNG</small><strong id="match-room">OFFLINE</strong></div><div><small>NGƯỜI CHƠI</small><strong id="match-player-count">1</strong></div><div><small>ĐIỂM CỦA BẠN</small><strong id="match-score">0</strong></div></div><button id="exit-game" class="ghost-button" type="button">RỜI TRẬN ↗</button></div>
-        <div class="arena-layout">
-          <div class="arena-frame"><div class="arena-corner tl"></div><div class="arena-corner tr"></div><div class="arena-corner bl"></div><div class="arena-corner br"></div><canvas id="game-canvas" width="832" height="576" aria-label="Màn hình TankWar"></canvas><div id="arena-overlay" class="arena-overlay" hidden><div class="overlay-card"><span class="overlay-kicker">ROUND UPDATE</span><h2 id="overlay-title">SẴN SÀNG?</h2><p id="overlay-text">Trận đấu sẽ bắt đầu ngay.</p><button id="overlay-action" class="primary-button" type="button">TIẾP TỤC</button></div></div></div>
-          <aside class="match-sidebar">
-            <div class="panel sidebar-panel"><div class="panel-heading"><div><span class="panel-index">01</span><h2>BẢNG ĐIỂM</h2></div></div><div id="scoreboard" class="scoreboard"></div></div>
-            <div class="panel sidebar-panel weapon-panel"><div class="panel-heading"><div><span class="panel-index">02</span><h2>TRẠNG THÁI VŨ KHÍ</h2></div></div><div class="weapon-state"><div class="weapon-badge" id="weapon-symbol">●</div><div><strong id="weapon-name">ĐẠN THƯỜNG</strong><small id="weapon-timer">SẴN SÀNG</small></div></div><div class="cooldown-track"><span id="cooldown-fill"></span></div><p class="sidebar-help">Di chuyển bằng WASD · Ngắm bằng chuột · Bắn bằng click hoặc Space.</p></div>
-            <div class="panel sidebar-panel feed-panel"><div class="panel-heading"><div><span class="panel-index">03</span><h2>CHIẾN BÁO</h2></div></div><div id="event-feed" class="event-feed"><div class="feed-item muted">Đang chờ tín hiệu trận đấu…</div></div></div>
-          </aside>
+        <div class="game-toolbar">
+          <div class="match-label"><span class="live-dot"></span><span id="match-mode">LIVE MATCH</span><strong id="phase-label">ĐANG CHỜ</strong></div>
+          <div class="match-stats">
+            <div><small>PHÒNG</small><strong id="match-room">OFFLINE</strong></div>
+            <div><small>NGƯỜI CHƠI</small><strong id="match-player-count">1</strong></div>
+            <div><small>ĐIỂM CỦA BẠN</small><strong id="match-score">0</strong></div>
+          </div>
+          <button id="pause-open-btn" class="ghost-button" type="button" title="Mở cài đặt (ESC)">⚙ CÀI ĐẶT (ESC)</button>
+          <button id="exit-game" class="ghost-button" type="button">RỜI TRẬN ↗</button>
         </div>
-        <div class="mobile-controls-note">WASD: di chuyển · Di chuyển chuột: ngắm · Click/Space: bắn</div>
+        <div class="arena-layout">
+          <div class="arena-frame" id="arena-frame">
+            <div class="arena-corner tl"></div>
+            <div class="arena-corner tr"></div>
+            <div class="arena-corner bl"></div>
+            <div class="arena-corner br"></div>
+            <canvas id="game-canvas" width="832" height="576" aria-label="Màn hình TankWar"></canvas>
+
+            <!-- BẢNG XẾP HẠNG LÀM MỜ Ở GÓC TRÊN BÊN PHẢI CỦA MAP -->
+            <div id="map-scoreboard" class="map-scoreboard">
+              <div class="map-scoreboard-header">
+                <span class="live-dot"></span>
+                <span>BẢNG XẾP HẠNG</span>
+              </div>
+              <div id="scoreboard" class="scoreboard"></div>
+            </div>
+
+            <!-- CỬA SỔ CÀI ĐẶT / TẠM DỪNG KHI NHẤN ESC -->
+            <div id="pause-modal" class="arena-overlay pause-overlay" hidden>
+              <div class="overlay-card pause-card">
+                <span class="overlay-kicker">MENU TẠM DỪNG · NHẤN ESC ĐỂ ĐÓNG</span>
+                <h2 id="pause-title">CÀI ĐẶT TRẬN ĐẤU</h2>
+                <p>Trận đấu đang tạm dừng. Chọn thao tác bên dưới:</p>
+                <div class="pause-settings-group">
+                  <button id="pause-sound-btn" class="secondary-button pause-opt-btn" type="button">
+                    <span>♫</span> ÂM THANH: <strong id="pause-sound-label">BẬT</strong>
+                  </button>
+                  <button id="pause-fullscreen-btn" class="secondary-button pause-opt-btn" type="button">
+                    <span>⛶</span> TOÀN MÀN HÌNH
+                  </button>
+                </div>
+                <div class="pause-actions-group">
+                  <button id="pause-resume-btn" class="primary-button" type="button">▶ TIẾP TỤC</button>
+                  <button id="pause-leave-btn" class="danger-button" type="button">✕ RỜI TRẬN</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="arena-overlay" class="arena-overlay" hidden>
+              <div class="overlay-card">
+                <span class="overlay-kicker">ROUND UPDATE</span>
+                <h2 id="overlay-title">SẴN SÀNG?</h2>
+                <p id="overlay-text">Trận đấu sẽ bắt đầu ngay.</p>
+                <button id="overlay-action" class="primary-button" type="button">TIẾP TỤC</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
     <footer class="site-footer"><span>© TANKWAR · BROWSER CLIENT</span><span>HASKELL / WEBSOCKET / HTML5 CANVAS</span><span id="fps-label">CLIENT READY</span></footer>
   </div>
-  <script src="app.js"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
