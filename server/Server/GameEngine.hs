@@ -1,6 +1,6 @@
 -- | Server.GameEngine
 -- Vòng lặp game chính (Authoritative Game Loop) chạy 60 Hz trên Server.
--- Xử lý: di chuyển xe tăng, vật lý đạn nảy, cooldown (thường 1s, box 2s), mystery box 15s,
+-- Xử lý: di chuyển xe tăng, vật lý đạn nảy, cooldown (thường 0.5s, box 1.0s), mystery box 15s,
 -- Gatling burst 3 viên, va chạm, xác định thắng thua.
 module Server.GameEngine
   ( startRoomGameLoop
@@ -23,6 +23,7 @@ import Common.Types
 import Common.Config
 import Common.Protocol
 import Server.State
+import Server.RoomManager         (generateMaze, shuffleList)
 import Server.Database.Connection (MongoPool)
 import Server.Database.PlayerRepo (addKill, addDeath, addWin, updatePlayerStats)
 import Server.Database.MatchRepo  (saveMatchResult)
@@ -218,8 +219,8 @@ moveTank deltaT input maze tank
         -- Vị trí mới dự kiến
         newPos  = vec2Add (tankPos tank) (vec2Scale deltaT vel)
 
-        -- Sliding collision với tường
-        clampedPos = clampToMaze maze newPos
+        -- Sliding collision với tường mê cung
+        clampedPos = clampToMaze maze (tankPos tank) newPos
 
         -- Cập nhật góc thân xe (chỉ khi đang di chuyển)
         bodyAngle = if vec2Len vel > 0.1
@@ -236,17 +237,42 @@ moveTank deltaT input maze tank
       , tankTurretAngle = turretAng
       }
 
--- | Giữ xe tăng trong giới hạn mê cung (đơn giản: AABB clamp).
--- TODO: Cải thiện bằng segment-based sliding collision.
-clampToMaze :: Maze -> Vec2 -> Vec2
-clampToMaze maze (Vec2 x y) = Vec2 cx cy
-  where
-    r  = tankRadius
-    cx = max r (min (mazeWidth maze - r) x)
-    cy = max r (min (mazeHeight maze - r) y)
+-- | Khoảng cách từ điểm p tới đoạn thẳng nối v1 và v2
+pointSegmentDist :: Vec2 -> Vec2 -> Vec2 -> Float
+pointSegmentDist p v1 v2 =
+  let d = vec2Dist v1 v2
+      l2 = d * d
+  in if l2 < 0.0001
+     then vec2Dist p v1
+     else let t = max 0 (min 1 (vec2Dot (vec2Sub p v1) (vec2Sub v2 v1) / l2))
+              proj = vec2Add v1 (vec2Scale t (vec2Sub v2 v1))
+          in vec2Dist p proj
+
+-- | Giữ xe tăng trong giới hạn mê cung và trượt theo tường nội bộ
+clampToMaze :: Maze -> Vec2 -> Vec2 -> Vec2
+clampToMaze maze oldPos newPos =
+  let w = mazeWidth maze
+      h = mazeHeight maze
+      r = tankRadius + 1
+      cx = max r (min (w - r) (vx newPos))
+      cy = max r (min (h - r) (vy newPos))
+      boundedPos = Vec2 cx cy
+      innerWalls = drop 4 (mazeWalls maze)
+
+      collidesWithAny pos = any (\(Wall p1 p2) -> pointSegmentDist pos p1 p2 < r) innerWalls
+
+  in if not (collidesWithAny boundedPos)
+       then boundedPos
+       else let posX = Vec2 cx (vy oldPos)
+            in if not (collidesWithAny posX)
+                 then posX
+                 else let posY = Vec2 (vx oldPos) cy
+                      in if not (collidesWithAny posY)
+                           then posY
+                           else oldPos
 
 --------------------------------------------------------------------------------
--- Di chuyển Đạn + Phản xạ tường
+-- Di chuyển Đạn + Phản xạ tường (Tối đa 5 lần)
 --------------------------------------------------------------------------------
 
 moveBullet :: Float -> Maze -> Bullet -> Bullet
@@ -258,7 +284,7 @@ moveBullet deltaT maze bul =
           , bulLifetime = bulLifetime bul - deltaT
           }
     _ ->
-      -- Đạn thường: nảy tường
+      -- Đạn thường: nảy tường biên & tường nội bộ
       let newPos = vec2Add (bulPos bul) (vec2Scale deltaT (bulVel bul))
           (finalPos, finalVel, bounceCount) =
             reflectBullet maze (bulPos bul) newPos (bulVel bul) (bulBounces bul)
@@ -269,34 +295,61 @@ moveBullet deltaT maze bul =
         , bulLifetime = bulLifetime bul - deltaT
         }
 
--- | Kiểm tra và phản xạ đạn qua tường mê cung.
--- Đơn giản: phản xạ qua các cạnh biên (AABB).
--- TODO: Phản xạ qua tường nội bộ (line segment intersection).
+-- | Kiểm tra và phản xạ đạn qua tường biên và các vách ngăn mê cung
 reflectBullet :: Maze -> Vec2 -> Vec2 -> Vec2 -> Int -> (Vec2, Vec2, Int)
-reflectBullet maze _oldPos (Vec2 nx ny) (Vec2 vvx vvy) bounces =
+reflectBullet maze (Vec2 ox oy) (Vec2 nx ny) (Vec2 vvx vvy) bounces =
   let w = mazeWidth maze
       h = mazeHeight maze
       r = bulletRadius
+      innerWalls = drop 4 (mazeWalls maze)
 
-      -- Phản xạ ngang (trái/phải)
-      (nx', vvx', b1) =
+      -- 1) Phản xạ biên
+      (nx1, vvx1, b1) =
         if nx < r
           then (r + (r - nx), abs vvx, bounces + 1)
         else if nx > w - r
           then (w - r - (nx - (w - r)), -(abs vvx), bounces + 1)
         else (nx, vvx, bounces)
 
-      -- Phản xạ dọc (trên/dưới)
-      (ny', vvy', b2) =
+      (ny1, vvy1, b2) =
         if ny < r
           then (r + (r - ny), abs vvy, b1 + 1)
         else if ny > h - r
           then (h - r - (ny - (h - r)), -(abs vvy), b1 + 1)
         else (ny, vvy, b1)
 
-  in (Vec2 nx' ny', Vec2 vvx' vvy', b2)
+      -- 2) Phản xạ qua tường nội bộ
+      checkWall (pos@(Vec2 cx cy), vel@(Vec2 cvx cvy), curB) (Wall (Vec2 x1 y1) (Vec2 x2 y2))
+        -- Tường ngang
+        | abs (y1 - y2) < 0.1 =
+            let wy   = y1
+                minX = min x1 x2 - r
+                maxX = max x1 x2 + r
+                crossed = (oy <= wy && cy >= wy) || (oy >= wy && cy <= wy)
+            in if crossed && cx >= minX && cx <= maxX
+                 then let newVy = if oy < wy then -abs cvy else abs cvy
+                          newCy = wy + (if oy < wy then -r else r)
+                      in (Vec2 cx newCy, Vec2 cvx newVy, curB + 1)
+                 else (pos, vel, curB)
+        -- Tường dọc
+        | abs (x1 - x2) < 0.1 =
+            let wx   = x1
+                minY = min y1 y2 - r
+                maxY = max y1 y2 + r
+                crossed = (ox <= wx && cx >= wx) || (ox >= wx && cx <= wx)
+            in if crossed && cy >= minY && cy <= maxY
+                 then let newVx = if ox < wx then -abs cvx else abs cvx
+                          newCx = wx + (if ox < wx then -r else r)
+                      in (Vec2 newCx cy, Vec2 newVx cvy, curB + 1)
+                 else (pos, vel, curB)
+        | otherwise = (pos, vel, curB)
 
--- | Kiểm tra đạn còn sống không.
+      (finalPos, finalVel, finalBounces) =
+        foldl checkWall (Vec2 nx1 ny1, Vec2 vvx1 vvy1, b2) innerWalls
+
+  in (finalPos, finalVel, finalBounces)
+
+-- | Kiểm tra đạn còn sống không (tối đa 5 lần nảy)
 bulletAlive :: Bullet -> Bool
 bulletAlive bul =
   bulLifetime bul > 0 && bulBounces bul <= maxBulletBounces
@@ -346,8 +399,9 @@ spawnBullets tank btype = do
   let pos   = tankPos tank
       angle = tankTurretAngle tank
       dir   = Vec2 (cos angle) (sin angle)
-      -- Offset đạn ra trước nòng pháo
-      spawnPos = vec2Add pos (vec2Scale (tankHalfSize + bulletRadius + 2) dir)
+      -- Offset an toàn trong bán kính thân xe (tankRadius = 15) để đạn không bao giờ xuyên qua tường khi đứng sát
+      let spawnOffset = 12.0 :: Float
+      let spawnPos = vec2Add pos (vec2Scale spawnOffset dir)
   case btype of
     NormalBullet -> return [mkBullet spawnPos dir bulletSpeed NormalBullet (tankId tank)]
 
@@ -356,8 +410,8 @@ spawnBullets tank btype = do
       let dir1 = vec2Rotate (-shotgunSpreadAngle) dir
           dir2 = dir
           dir3 = vec2Rotate shotgunSpreadAngle dir
-          sp1  = vec2Add pos (vec2Scale (tankHalfSize + bulletRadius + 2) dir1)
-          sp3  = vec2Add pos (vec2Scale (tankHalfSize + bulletRadius + 2) dir3)
+          sp1  = vec2Add pos (vec2Scale spawnOffset dir1)
+          sp3  = vec2Add pos (vec2Scale spawnOffset dir3)
       return [ mkBullet sp1 dir1 bulletSpeed NormalBullet (tankId tank)
              , mkBullet spawnPos dir2 bulletSpeed NormalBullet (tankId tank)
              , mkBullet sp3 dir3 bulletSpeed NormalBullet (tankId tank)
@@ -527,14 +581,16 @@ startNewRound ss roomId = do
   case maybeRoom of
     Nothing -> return ()
     Just room -> do
-      let maze    = rsMaze room
-          spawns  = mazeSpawnPts maze
-          pids    = rsPlayerIds room
-          -- Reset xe tăng: vị trí spawn, vũ khí mặc định, alive
-          tanks'  = Map.fromList
+      -- Sinh mê cung ngẫu nhiên hoàn toàn mới cho round này!
+      newMaze <- generateMaze
+      let spawns = mazeSpawnPts newMaze
+          pids   = rsPlayerIds room
+      -- Xáo trộn điểm spawn ngẫu nhiên trên toàn bản đồ
+      shuffledSpawns <- shuffleList spawns
+      let tanks'  = Map.fromList
             [ (pid, (rsTanks room Map.! pid)
-                { tankPos    = if idx < length spawns
-                               then spawns !! idx
+                { tankPos    = if idx < length shuffledSpawns
+                               then shuffledSpawns !! idx
                                else Vec2 100 100
                 , tankVel    = vec2Zero
                 , tankWeapon = defaultWeaponState
@@ -546,7 +602,8 @@ startNewRound ss roomId = do
       boxDelay <- randomRIO (boxSpawnIntervalMin, boxSpawnIntervalMax)
 
       atomically $ modifyRoom ss roomId $ \r -> r
-        { rsTanks        = tanks'
+        { rsMaze         = newMaze
+        , rsTanks        = tanks'
         , rsBullets      = []
         , rsLasers       = []
         , rsMysteryBoxes = []
@@ -556,7 +613,7 @@ startNewRound ss roomId = do
         }
 
       broadcastToRoom ss roomId (SCountdown countdownDuration)
-      putStrLn $ "[Game] Round mới phòng " ++ show roomId
+      putStrLn $ "[Game] Round mới phòng " ++ show roomId ++ " với mê cung ngẫu nhiên!"
 
 --------------------------------------------------------------------------------
 -- Kết thúc trận đấu (Match Over)

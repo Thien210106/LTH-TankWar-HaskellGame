@@ -13,7 +13,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text                (Text, pack, unpack)
 import qualified Data.ByteString.Lazy as BL
 import System.Environment       (getArgs)
-import System.IO                (hSetBuffering, stdout, BufferMode(..))
+import System.IO                (hSetBuffering, hSetEncoding, stdout, stderr, utf8, BufferMode(..))
 
 import qualified Network.WebSockets as WS
 
@@ -33,8 +33,11 @@ import Server.Database.MatchRepo  ()
 
 main :: IO ()
 main = do
-  -- Flush stdout line-by-line cho log
+  -- Flush stdout/stderr line-by-line và đảm bảo encoding UTF-8 cho Unicode logs
   hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  hSetEncoding stdout utf8
+  hSetEncoding stderr utf8
 
   -- Parse tham số dòng lệnh
   args <- getArgs
