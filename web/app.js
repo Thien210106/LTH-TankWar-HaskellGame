@@ -8,48 +8,29 @@
   let WORLD_W = 1344;
   let WORLD_H = 704;
   const TANK_RADIUS = 15;
-  const TEST_GAME = window.TankWarTestGame || {
-    enabled: false, cameraZoom: 1, collisionRadius: 128,
-    tankRenderScale: 1, enemyVisibilityRadius: Infinity, playerRespawnSeconds: 5,
-    defaultMapId: 'forest', localBotNames: ['CPU-ALPHA', 'CPU-BRAVO', 'CPU-DELTA'], winKills: Infinity
-  };
-  const LOCAL_WORLD_SIZE = 4096;
-  const LOCAL_TANK_SIZE = 256;
-  const LOCAL_TANK_RADIUS = TEST_GAME.collisionRadius;
-  const LOCAL_CAMERA_ZOOM = TEST_GAME.cameraZoom;
-  const LOCAL_WALL_THICKNESS = 88;
-  const LOCAL_SPEED_SCALE = LOCAL_WORLD_SIZE / WORLD_W;
   const COLORS = {
     TankRed: '#ff655d', TankBlue: '#5ca9ff', TankGreen: '#8ae65e', TankYellow: '#ffd45d',
     red: '#ff655d', blue: '#5ca9ff', green: '#8ae65e', yellow: '#ffd45d'
   };
   const $ = (id) => document.getElementById(id);
   const screens = {
-    home: $('home-screen'), map: $('map-screen'), tankSelect: $('tank-select-screen'), lobby: $('lobby-screen'), room: $('room-screen'), game: $('game-screen'), results: $('results-screen')
+    home: $('home-screen'), lobby: $('lobby-screen'), room: $('room-screen'), game: $('game-screen')
   };
   const canvas = $('game-canvas');
   const ctx = canvas.getContext('2d');
   const input = { up: false, down: false, left: false, right: false, fire: false, mouseX: WORLD_W / 2, mouseY: WORLD_H / 2 };
   const imageFiles = {
     hull: 'assets/img/tank-hull.png', gun: 'assets/img/tank-gun.png',
-    box: 'assets/img/mystery-box.png'
+    shotgun: 'assets/img/bullet-shotgun.png', laser: 'assets/img/bullet-laser.png',
+    gatling: 'assets/img/bullet-gatling.png', piercing: 'assets/img/bullet-piercing.png',
+    box: 'assets/img/mystery-box.png', explosion: 'assets/img/explosion.png'
   };
   const images = {};
+  const tintedImages = new Map();
   Object.entries(imageFiles).forEach(([name, src]) => {
     const im = new Image();
     im.src = src;
     images[name] = im;
-  });
-  const hudImages = {};
-  Array.from({ length: 10 }, (_, digit) => digit).forEach(digit => {
-    const image = new Image();
-    image.src = `assets/hud/numbers/${digit}.png`;
-    hudImages[`digit-${digit}`] = image;
-  });
-  Array.from({ length: 8 }, (_, index) => index + 1).forEach(frame => {
-    const image = new Image();
-    image.src = `assets/hud/loading/Loading${frame}.png`;
-    hudImages[`loading-${frame}`] = image;
   });
 
   let screenName = 'home';
@@ -69,50 +50,12 @@
   let lastFrameTime = 0;
   let fpsFrameCount = 0;
   let fpsLast = performance.now();
-  let soundEnabled = true;
-  let audioUnlocked = false;
-  let currentMusic = '';
-  let lastCountdownSecond = null;
+  let soundEnabled = false;
+  let audioContext = null;
   let roundOverlayAction = null;
   let localGame = null;
-  let localMap = null;
-  let selectedMapId = 'forest';
-  let selectedTankColor = 'TankRed';
-  let selectedHullId = '05';
-  let selectedGunId = '05';
-  let tankLoadoutConfirmed = false;
-  let tankSelectReturn = 'home';
-  let mapLoadError = '';
   let lastOnlineUiUpdate = 0;
 
-  const MAP_META = {
-    forest: { label: 'FOREST', title: 'RỪNG RẬM', accent: '#b9d66a' },
-    ruins: { label: 'RUINS', title: 'PHẾ TÍCH', accent: '#d6a77a' },
-    depot: { label: 'DEPOT', title: 'KHO HÀNG', accent: '#d7ad65' }
-  };
-  const trainingMaps = new Map();
-  const camera = { x: 0, y: 0 };
-  const AUDIO_FILES = {
-    menu: 'assets/audio/backgroundmenu.mp3', endMenu: 'assets/audio/backgroundmenuend.mp3', game: 'assets/audio/musicongame.mp3',
-    click: 'assets/audio/clickmouse.mp3', countdown: 'assets/audio/coutdown.mp3', pickup: 'assets/audio/claimitem.mp3',
-    explosion: 'assets/audio/explosion.mp3', winner: 'assets/audio/gamewinner.mp3', gameover: 'assets/audio/gameover.mp3',
-    rank: 'assets/audio/rank.mp3', move: 'assets/audio/tankmove.mp3', normalShot: 'assets/audio/sungshot.mp3',
-    laserShot: 'assets/audio/laser.mp3', gatlingShot: 'assets/audio/tieulien.mp3', piercingShot: 'assets/audio/xuyentuong.mp3'
-  };
-  const musicTracks = {
-    menu: createLoopingAudio(AUDIO_FILES.menu, .28),
-    game: createLoopingAudio(AUDIO_FILES.game, .23),
-    results: createLoopingAudio(AUDIO_FILES.endMenu, .30)
-  };
-  const movementTrack = createLoopingAudio(AUDIO_FILES.move, .13);
-
-  const mazeWalls = buildMazeWalls();
-  const maze = {
-    mazeWidth: WORLD_W,
-    mazeHeight: WORLD_H,
-    mazeWalls,
-    mazeSpawnPts: [{ vx: 96, vy: 96 }, { vx: 736, vy: 480 }, { vx: 736, vy: 96 }, { vx: 96, vy: 480 }],
-    mazeBoxSpawnPts: [{ vx: 256, vy: 288 }, { vx: 576, vy: 288 }, { vx: 416, vy: 128 }, { vx: 416, vy: 448 }, { vx: 416, vy: 288 }]
   const SoundFX = {
     init() {
       if (!audioContext) {
@@ -476,124 +419,12 @@
     return { vx: 96, vy: 32 };
   }
 
-  const mapLoadPromise = loadTrainingMaps().catch(error => {
-    mapLoadError = error && error.message ? error.message : 'Không đọc được dữ liệu map.';
-    return null;
-  });
-
-  async function loadTrainingMaps() {
-    const ids = Object.keys(MAP_META);
-    await Promise.all(ids.map(async id => {
-      const response = await fetch(`assets/maps/${id}_layout.json`, { cache: 'force-cache' });
-      if (!response.ok) throw new Error(`Không tải được layout ${id.toUpperCase()} (${response.status}).`);
-      const source = await response.json();
-      const image = new Image();
-      image.src = `assets/maps/${id}_maze_4096.png`;
-      trainingMaps.set(id, normaliseTrainingMap(id, source, image));
-    }));
-  }
-
-  function normaliseTrainingMap(id, source, background) {
-    const number = value => Number(value || 0);
-    const width = number(source.width) || LOCAL_WORLD_SIZE;
-    const height = number(source.height) || LOCAL_WORLD_SIZE;
-    const cellSize = number(source.cell_size) || 352;
-    const gridOffset = number(source.grid_offset) || 112;
-    const wallRects = (source.wall_rectangles || []).map(rect => ({
-      x: number(rect.x), y: number(rect.y), width: number(rect.width), height: number(rect.height), kind: 'wall'
-    }));
-    const blockedRects = (source.blocked_cells || []).map(cell => {
-      const col = number(cell[0]), row = number(cell[1]);
-      return { x: gridOffset + col * cellSize, y: gridOffset + row * cellSize, width: cellSize, height: cellSize, kind: 'blocked' };
-    });
-    const spawns = (source.spawn_centres || []).map(point => ({ vx: number(point[0]), vy: number(point[1]) }));
-    return {
-      id, label: MAP_META[id].label, title: MAP_META[id].title, accent: MAP_META[id].accent,
-      width, height, cellSize, gridOffset,
-      tankSize: number(source.tank_reference_size) || LOCAL_TANK_SIZE,
-      tankScale: number(source.tank_render_scale) || 1,
-      wallThickness: number(source.wall_thickness) || LOCAL_WALL_THICKNESS,
-      wallRects, blockedRects, collisionRects: wallRects.concat(blockedRects), spawns, background
-    };
-  }
-
-  function createLoopingAudio(src, volume) {
-    const track = new Audio(src);
-    track.preload = 'auto';
-    track.loop = true;
-    track.volume = volume;
-    return track;
-  }
-
-  function unlockAudio() {
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-    syncMusicForScreen();
-  }
-
-  function playSfx(name, volume = .55) {
-    if (!soundEnabled || !audioUnlocked || !AUDIO_FILES[name]) return;
-    const sound = new Audio(AUDIO_FILES[name]);
-    sound.preload = 'auto';
-    sound.volume = volume;
-    sound.play().catch(() => {});
-  }
-
-  function setMovementSound(isMoving) {
-    if (!soundEnabled || !audioUnlocked || !isMoving) {
-      movementTrack.pause();
-      movementTrack.currentTime = 0;
-      return;
-    }
-    movementTrack.play().catch(() => {});
-  }
-
-  function syncMusicForScreen() {
-    const wanted = screenName === 'game' ? 'game' : screenName === 'results' ? 'results' : 'menu';
-    Object.entries(musicTracks).forEach(([name, track]) => {
-      if (!soundEnabled || !audioUnlocked || name !== wanted) {
-        track.pause();
-        if (name !== wanted) track.currentTime = 0;
-      }
-    });
-    if (soundEnabled && audioUnlocked && currentMusic !== wanted) {
-      currentMusic = wanted;
-      musicTracks[wanted].play().catch(() => {});
-    } else if (!soundEnabled) {
-      currentMusic = '';
-    }
-  }
-
-  function refreshSoundToggle() {
-    const button = $('sound-toggle');
-    button.style.color = soundEnabled ? 'var(--lime)' : 'var(--muted)';
-    button.textContent = soundEnabled ? '♫' : '♩';
-    button.title = soundEnabled ? 'Tắt âm thanh' : 'Bật âm thanh';
-    button.setAttribute('aria-label', button.title);
-  }
-
   function showScreen(name) {
     screenName = name;
     Object.entries(screens).forEach(([key, el]) => { el.hidden = key !== name; });
-    document.body.classList.toggle('in-game', name === 'game');
-    if (name !== 'game') document.body.classList.remove('mouse-pressed');
     if (name === 'game') startRenderLoop();
     else stopRenderLoop();
-    syncMusicForScreen();
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  // A browser only grants native fullscreen from a user gesture. The local test
-  // flow calls this immediately from its confirmation button; CSS still fills
-  // the available viewport if a browser declines the native request.
-  function enterGameplayFullscreen() {
-    const root = document.documentElement;
-    if (document.fullscreenElement || !root.requestFullscreen) return;
-    root.requestFullscreen().catch(() => {});
-  }
-
-  function leaveGameplayFullscreen() {
-    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
   }
 
   function statusPill(state, text) {
@@ -657,7 +488,6 @@
   }
 
   function connectOnline() {
-    unlockAudio();
     setError('home-error', '');
     const rawName = $('player-name').value.trim();
     const url = $('server-url').value.trim();
@@ -670,8 +500,7 @@
     localStorage.setItem('tankwar-server', url);
     statusPill('connecting', 'ĐANG KẾT NỐI');
     $('online-button').disabled = true;
-    $('online-button').classList.add('is-loading');
-    $('online-button').setAttribute('aria-label', 'Đang kết nối tới server');
+    $('online-button').innerHTML = '<span>⌁</span> ĐANG KẾT NỐI…';
     let socket;
     try { socket = new WebSocket(url); }
     catch (error) { resetConnectButton(); statusPill('idle', 'CHƯA KẾT NỐI SERVER'); setError('home-error', `Không tạo được kết nối WebSocket: ${error.message}`); return; }
@@ -715,8 +544,7 @@
 
   function resetConnectButton() {
     $('online-button').disabled = false;
-    $('online-button').classList.remove('is-loading');
-    $('online-button').setAttribute('aria-label', 'Tìm phòng online');
+    $('online-button').innerHTML = '<span>⌁</span> KẾT NỐI ONLINE <b>↗</b>';
   }
 
   function closeSocket(sendLeave = true) {
@@ -795,11 +623,7 @@
       }
       case 'SCountdown': {
         const seconds = Number(Array.isArray(data) ? data[0] : data);
-        const countdownSecond = Math.max(0, Math.ceil(seconds || 0));
-        if (countdownSecond > 0 && countdownSecond !== lastCountdownSecond) playSfx('countdown', .46);
-        lastCountdownSecond = countdownSecond;
         $('countdown-banner').hidden = false;
-        $('countdown-banner').textContent = `TRẬN ĐẤU BẮT ĐẦU SAU ${countdownSecond}…`;
         $('countdown-banner').textContent = `TRẬN ĐẤU BẮT ĐẦU SAU ${Math.max(0, Math.ceil(seconds || 0))}…`;
         SoundFX.countdown(seconds);
         break;
@@ -833,31 +657,12 @@
         const winner = values[0] || 'Chưa xác định';
         const scores = Array.isArray(values[1]) ? values[1] : [];
         updateScoreboard({ wsTanks: [], wsScores: scores });
-        playSfx('rank', .48);
         showOverlay('KẾT THÚC HIỆP', `${winner} thắng hiệp này. Chuẩn bị cho vòng tiếp theo.`, 'TIẾP TỤC', () => hideOverlay());
         addFeed(`${winner} thắng hiệp đấu.`); break;
       }
       case 'SMatchOver': {
         const values = Array.isArray(data) ? data : [];
         const winner = values[0] || 'Chưa xác định';
-        const scores = Array.isArray(values[1]) ? values[1] : [];
-        showPostMatch({
-          title: winner === username ? 'CHIẾN THẮNG' : 'TRẬN ĐẤU KẾT THÚC',
-          summary: `${winner} là người chiến thắng chung cuộc.`,
-          kills: 0, score: 0, map: 'ONLINE', scores
-        });
-        playSfx(winner === username ? 'winner' : 'gameover', .62);
-        addFeed(`Chiến thắng chung cuộc: ${winner}`, 'warn'); break;
-      }
-      case 'SKillEvent': {
-        const pair = Array.isArray(data) ? data : [];
-        playSfx('explosion', .38);
-        addFeed(`${pair[0] || 'Ai đó'} hạ ${pair[1] || 'đối thủ'}!`, 'warn'); break;
-      }
-      case 'SMysteryBoxPickup': {
-        const pair = Array.isArray(data) ? data : [];
-        playSfx('pickup', .52);
-        addFeed(`${pair[0] || 'Người chơi'} nhặt hộp: ${weaponName(pair[1])}.`); break;
         showOverlay('TRẬN ĐẤU KẾT THÚC', `${winner} là người chiến thắng chung cuộc.`, 'VỀ PHÒNG CHỜ', () => { hideOverlay(); if (mode === 'online' && activeRoom) sendMessage('CLeaveRoom'); else { showScreen('lobby'); sendMessage('CListRooms'); } });
         addFeed(`Chiến thắng chung cuộc: ${winner}`, 'warn');
         SoundFX.victory();
@@ -890,44 +695,6 @@
     return '';
   }
 
-  function showPostMatch({ title, summary, kills = 0, score = 0, map = 'FOREST', scores = [] }) {
-    hideOverlay();
-    leaveGameplayFullscreen();
-    $('results-title').textContent = title;
-    $('results-summary').textContent = summary;
-    $('results-kills').textContent = String(kills);
-    $('results-score').textContent = String(score);
-    $('results-map').textContent = String(map).toUpperCase();
-    $('results-player-name').textContent = username || displayName || 'TANK PILOT';
-    const board = $('results-board');
-    board.innerHTML = '';
-    const entries = Array.isArray(scores) ? scores.slice().sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0)) : [];
-    if (!entries.length) entries.push([username || 'TANK PILOT', score]);
-    entries.slice(0, 4).forEach(([name, points], index) => {
-      const row = document.createElement('div'); row.className = 'results-row';
-      const frame = document.createElement('img');
-      frame.className = 'results-row-frame';
-      frame.alt = '';
-      frame.src = index === 0 ? 'assets/menu/hangnhat.png' : 'assets/menu/nguoikhac.png';
-      const rank = document.createElement('span'); rank.textContent = String(index + 1).padStart(2, '0');
-      const player = document.createElement('span'); player.textContent = name || 'TANK PILOT';
-      const value = document.createElement('strong'); value.textContent = `${Number(points || 0)} PTS`;
-      row.append(frame, rank, player, value); board.append(row);
-    });
-    showScreen('results');
-    playSfx('rank', .48);
-  }
-
-  function exitResultsToHome() {
-    setMovementSound(false);
-    leaveGameplayFullscreen();
-    localGame = null;
-    localMap = null;
-    if (mode === 'online') closeSocket();
-    mode = 'none';
-    showScreen('home');
-  }
-
   function onRoomReady() {
     setError('lobby-error', '');
     roomPlayerNames = [{ name: username || displayName || 'Bạn', color: isHost ? 'TankRed' : 'TankBlue', self: true, host: isHost }];
@@ -937,73 +704,8 @@
     $('countdown-banner').hidden = true;
     setError('room-error', '');
     renderRoomPlayers();
-    // The player already picked a loadout before connecting. Keep the server
-    // room flow intact and do not make them choose the same parts twice.
-    if (tankLoadoutConfirmed) showScreen('room');
-    else openTankSelect('room');
-    addFeed(isHost ? 'Đã tạo phòng mới.' : 'Đã tham gia phòng.');
-  }
-
-  function refreshTankAssembly() {
-    const hull = String(selectedHullId).padStart(2, '0');
-    const gun = String(selectedGunId).padStart(2, '0');
-    $('tank-preview-hull').src = `assets/tanks/hull_${hull}.png`;
-    $('tank-preview-gun').src = `assets/tanks/gun_${gun}.png`;
-    $('selected-hull-label').textContent = `THÂN ${hull}`;
-    $('selected-gun-label').textContent = `NÒNG ${gun}`;
-    document.querySelectorAll('[data-hull]').forEach(button => {
-      const active = button.dataset.hull === hull;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
-    });
-    document.querySelectorAll('[data-gun]').forEach(button => {
-      const active = button.dataset.gun === gun;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
-    });
-  }
-
-  function openTankSelect(returnTo) {
-    tankSelectReturn = returnTo;
-    const savedName = $('player-name').value.trim() || username || displayName || localStorage.getItem('tankwar-name') || '';
-    $('tank-name').value = savedName;
-    const roomId = activeRoom && readField(activeRoom, 'riRoomId');
-    $('garage-room-code').textContent = returnTo === 'offline' ? 'BOT-TEST' : roomId || 'CONNECT';
-    $('tank-select-note').textContent = returnTo === 'offline'
-      ? 'Phòng thử ghép cùng 3 bot. Map thử mặc định chỉ nằm trong testgame.js; map online vẫn do server ngẫu nhiên.'
-      : roomId
-        ? 'Mã phòng đã được cấp. Map và trạng thái trận online vẫn do server quyết định.'
-        : 'Sau khi xác nhận, bạn sẽ kết nối để tìm hoặc tạo phòng. Map online do server chọn ngẫu nhiên.';
-    refreshTankAssembly();
-    showScreen('tankSelect');
-  }
-
-  function closeTankSelect() {
-    if (tankSelectReturn === 'offline' || tankSelectReturn === 'connect') showScreen('home');
-    else if (tankSelectReturn === 'room') showScreen('lobby');
-    else showScreen('home');
-  }
-
-  function confirmTankSelection() {
-    unlockAudio();
-    const name = $('tank-name').value.trim() || $('player-name').value.trim() || 'TankPilot';
-    username = name;
-    displayName = name;
-    $('player-name').value = name;
-    localStorage.setItem('tankwar-name', name);
-    tankLoadoutConfirmed = true;
-    if (tankSelectReturn === 'offline') {
-      startOffline(TEST_GAME.defaultMapId || 'forest');
-      return;
-    }
-    if (tankSelectReturn === 'connect') {
-      // connectOnline keeps the existing WebSocket protocol and reads this
-      // hidden compatibility field; all editable naming remains in the garage.
-      showScreen('home');
-      connectOnline();
-      return;
-    }
     showScreen('room');
+    addFeed(isHost ? 'Đã tạo phòng mới.' : 'Đã tham gia phòng.');
   }
 
   function renderRoomList() {
@@ -1062,7 +764,6 @@
   }
 
   function createRoom() {
-    unlockAudio();
     setError('lobby-error', '');
     const roomName = $('room-name').value.trim() || `${displayName || username}’s Arena`;
     const max = Number($('max-players').value || 4);
@@ -1072,7 +773,6 @@
   }
 
   function joinRoom() {
-    unlockAudio();
     setError('lobby-error', '');
     const id = $('join-id').value.trim().toUpperCase();
     const password = $('join-password').value;
@@ -1087,32 +787,6 @@
     renderRoomPlayers();
   }
 
-  function openMapSelect() {
-    unlockAudio();
-    closeSocket(false);
-    mode = 'none';
-    setError('map-error', '');
-    showScreen('map');
-    mapLoadPromise.then(() => {
-      if (mapLoadError) setError('map-error', `Không tải được map luyện tập: ${mapLoadError}. Hãy chạy frontend qua http://localhost như hướng dẫn trong web/README.md.`);
-    });
-  }
-
-  function chooseOfflineMap(mapId) {
-    unlockAudio();
-    selectedMapId = mapId;
-    openTankSelect('offline');
-  }
-
-  async function startOffline(mapId = TEST_GAME.defaultMapId || 'forest') {
-    unlockAudio();
-    enterGameplayFullscreen();
-    await mapLoadPromise;
-    const chosenMap = trainingMaps.get(mapId);
-    if (!chosenMap) {
-      setError('map-error', `Không thể khởi tạo map ${String(mapId).toUpperCase()}. ${mapLoadError || 'Kiểm tra static server.'}`);
-      return;
-    }
   function startOffline() {
     hideOverlay();
     maze = generateRandomMaze();
@@ -1123,55 +797,16 @@
     localStorage.setItem('tankwar-name', username);
     closeSocket(false);
     mode = 'offline'; activeRoom = null; isHost = false;
-    selectedMapId = mapId;
-    localMap = chosenMap;
     localGame = createLocalGame(username);
     latestSnapshot = localSnapshot();
     $('match-mode').textContent = 'OFFLINE PRACTICE';
-    $('match-room').textContent = chosenMap.label;
+    $('match-room').textContent = 'TRAINING';
     $('phase-label').textContent = 'ĐANG THỰC HÀNH';
     $('match-player-count').textContent = '4';
     setError('home-error', '');
     statusPill('idle', 'CHẾ ĐỘ OFFLINE');
     updateMatchHeader(latestSnapshot); updateScoreboard(latestSnapshot); updateWeaponPanel(latestSnapshot);
     showScreen('game');
-    addFeed(`Bắt đầu thực hành tại ${chosenMap.label}.`);
-  }
-
-  function createLocalGame(name) {
-    const spawns = getLocalSpawns(localMap);
-    const colors = [selectedTankColor].concat(['TankRed','TankBlue','TankGreen','TankYellow'].filter(color => color !== selectedTankColor));
-    const names = [name].concat(TEST_GAME.localBotNames);
-    const tanks = names.map((n,i) => ({
-      tankId: n,
-      tankPos: { ...spawns[i] }, tankVel: { vx: 0, vy: 0 }, tankBodyAngle: 0,
-      tankTurretAngle: Math.PI, tankColor: colors[i],
-      tankWeapon: { wsCurrentWeapon: 'NormalBullet', wsBuffTimeLeft: 0, wsCooldownState: 'Ready' },
-      tankAlive: true, tankScore: 0, tankKills: 0,
-      _bot: i > 0, _cooldown: .8 + i * .45, _respawn: 0, _dirTimer: 0, _direction: Math.random() * Math.PI * 2
-    }));
-    const view = localViewSize();
-    camera.x = clamp(spawns[0].vx - view.width / 2, 0, localMap.width - view.width);
-    camera.y = clamp(spawns[0].vy - view.height / 2, 0, localMap.height - view.height);
-    const magazineSize = Number(TEST_GAME.magazineSize || 6);
-    return {
-      name, tanks, bullets: [], boxes: [], lasers: [], time: 0, boxTimer: 10,
-      fireCooldown: 0, lives: 5, score: 0, gameOver: false, kills: 0, wave: 1,
-      ammo: magazineSize, maxAmmo: magazineSize,
-      reloadTimer: 0, reloadSeconds: Number(TEST_GAME.reloadSeconds || 2.2),
-      respawnTimer: 0, spectatorTankId: ''
-    };
-  }
-
-  function getLocalSpawns(map) {
-    const preferred = (map.spawns || []).map(point => ({ ...point }));
-    const fallbacks = [
-      { vx: map.width - 288, vy: 288 }, { vx: 288, vy: map.height - 288 },
-      { vx: map.width - 288, vy: map.height - 288 }
-    ];
-    return preferred.concat(fallbacks).filter((point, index, points) =>
-      !points.slice(0, index).some(other => other.vx === point.vx && other.vy === point.vy)
-    ).slice(0, 4);
     addFeed('Bắt đầu chế độ thực hành offline với mê cung mới!');
   }
 
@@ -1209,66 +844,35 @@
   function updateOffline(dt) {
     if (!localGame || localGame.gameOver || isPaused) return;
     const g = localGame; g.time += dt; g.fireCooldown = Math.max(0,g.fireCooldown-dt);
-    if (g.reloadTimer > 0) {
-      g.reloadTimer = Math.max(0, g.reloadTimer - dt);
-      if (g.reloadTimer === 0) g.ammo = g.maxAmmo;
-    }
     const player = g.tanks[0];
-    const weapon = player.tankWeapon;
-    if (player.tankAlive) {
-      const dx = (input.right?1:0)-(input.left?1:0), dy = (input.down?1:0)-(input.up?1:0);
-      if (dx || dy) {
-        const len = Math.hypot(dx,dy); const mx=dx/len*150*LOCAL_SPEED_SCALE*dt, my=dy/len*150*LOCAL_SPEED_SCALE*dt;
-        moveLocalTank(player, mx, my);
-        player.tankBodyAngle = Math.atan2(dy,dx);
-      }
-      setMovementSound(!!(dx || dy));
-      updateLocalCamera(player.tankPos, dt);
-      const pointer = screenToLocalWorld(input.mouseX, input.mouseY);
-      player.tankTurretAngle=Math.atan2(pointer.vy-player.tankPos.vy,pointer.vx-player.tankPos.vx);
-    } else {
-      input.fire = false;
-      setMovementSound(false);
-      g.respawnTimer = Math.max(0, g.respawnTimer - dt);
-      const killer = g.tanks.find(tank => tank.tankId === g.spectatorTankId && tank.tankAlive)
-        || g.tanks.slice(1).find(tank => tank.tankAlive);
-      if (killer) updateLocalCamera(killer.tankPos, dt);
-      if (g.respawnTimer === 0) {
-        player.tankPos = { ...getLocalSpawns(localMap)[0] };
-        player.tankVel = { vx: 0, vy: 0 };
-        player.tankAlive = true;
-        g.spectatorTankId = '';
-        updateLocalCamera(player.tankPos, dt);
-        addFeed('Bạn đã hồi sinh sau 5 giây.');
-      }
+    if (!player.tankAlive) return;
+    const dx = (input.right?1:0)-(input.left?1:0), dy = (input.up?1:0)-(input.down?1:0);
+    if (dx || dy) {
+      const len = Math.hypot(dx,dy); const mx=dx/len*150*dt, my=dy/len*150*dt;
+      const old = player.tankPos; const nextX={vx:old.vx+mx,vy:old.vy}; const nextY={vx:old.vx,vy:old.vy+my};
+      if (!hitsWall(nextX,TANK_RADIUS,true)) old.vx=clamp(nextX.vx,TANK_RADIUS,WORLD_W-TANK_RADIUS);
+      if (!hitsWall(nextY,TANK_RADIUS,true)) old.vy=clamp(nextY.vy,TANK_RADIUS,WORLD_H-TANK_RADIUS);
+      player.tankBodyAngle = Math.atan2(dy,dx);
     }
+    const aimX=input.mouseX, aimY=WORLD_H-input.mouseY;
+    player.tankTurretAngle=Math.atan2(aimY-player.tankPos.vy,aimX-player.tankPos.vx);
+    const weapon = player.tankWeapon;
     weapon.wsBuffTimeLeft=Math.max(0,weapon.wsBuffTimeLeft-dt);
     if (weapon.wsBuffTimeLeft<=0 && weapon.wsCurrentWeapon!=='NormalBullet') weapon.wsCurrentWeapon='NormalBullet';
-    if (player.tankAlive && input.fire && g.fireCooldown<=0 && g.ammo > 0) {
+    if (input.fire && g.fireCooldown<=0) {
       localShoot(player,player.tankTurretAngle,weapon.wsCurrentWeapon);
-      g.fireCooldown=weapon.wsCurrentWeapon==='NormalBullet'?1:2;
-      g.ammo--;
-      if (g.ammo === 0) g.reloadTimer = g.reloadSeconds;
       g.fireCooldown=weapon.wsCurrentWeapon==='NormalBullet'?0.5:1.0;
     }
-    weapon.wsCooldownState = g.fireCooldown > 0 || g.reloadTimer > 0
-      ? { tag: 'Reloading', contents: Math.max(g.fireCooldown, g.reloadTimer) }
-      : 'Ready';
+    weapon.wsCooldownState = g.fireCooldown > 0 ? { tag: 'Reloading', contents: g.fireCooldown } : 'Ready';
     g.boxTimer -= dt;
     if (g.boxTimer<=0 && g.boxes.length===0) {
-      const pt = pickOpenLocalPoint(26);
+      const pt=maze.mazeBoxSpawnPts[Math.floor(Math.random()*maze.mazeBoxSpawnPts.length)];
       g.boxes.push({pos:{...pt},life:12}); g.boxTimer=22+Math.random()*8;
     }
     g.boxes.forEach(box=>box.life-=dt); g.boxes=g.boxes.filter(b=>b.life>0);
-    if (player.tankAlive && g.boxes.some(b=>distance(b.pos,player.tankPos)<LOCAL_TANK_RADIUS+28)) {
+    if (g.boxes.some(b=>distance(b.pos,player.tankPos)<23)) {
       g.boxes=[]; const special=['ShotgunBullet','LaserBullet','WallPiercingBullet','GatlingBullet'][Math.floor(Math.random()*4)];
       weapon.wsCurrentWeapon=special; weapon.wsBuffTimeLeft=15;
-      playSfx('pickup', .58);
-      addFeed(`Nhặt Mystery Box: ${weaponName(special)} trong 15 giây!`);
-    }
-
-    g.tanks.slice(1).forEach((bot,idx)=>{
-      if (!bot.tankAlive) { bot._respawn-=dt; if (bot._respawn<=0) { const sp=getLocalSpawns(localMap)[idx+1]; bot.tankPos={...sp}; bot.tankAlive=true; bot._cooldown=1.2; } return; }
       SoundFX.pickup();
       addFeed(`Nhặt Mystery Box: ${weaponName(special)} trong 15 giây!`);
     }
@@ -1286,48 +890,16 @@
       bot._cooldown-=dt; bot._dirTimer-=dt;
       const toX=player.tankPos.vx-bot.tankPos.vx, toY=player.tankPos.vy-bot.tankPos.vy;
       const dist=Math.hypot(toX,toY)||1;
-      const speed = 78 * LOCAL_SPEED_SCALE * dt;
-      const moveX = toX / dist * speed, moveY = toY / dist * speed;
-      const before = { ...bot.tankPos };
-      moveLocalTank(bot, moveX, moveY);
-      if (distance(before, bot.tankPos) < .01 && bot._dirTimer<=0) {bot._direction=Math.random()*Math.PI*2;bot._dirTimer=.8+Math.random()*1.5;}
+      const primary={vx:bot.tankPos.vx+toX/dist*78*dt,vy:bot.tankPos.vy+toY/dist*78*dt};
+      const altX={vx:primary.vx,vy:bot.tankPos.vy}; const altY={vx:bot.tankPos.vx,vy:primary.vy};
+      if (!hitsWall(primary,TANK_RADIUS,true)) bot.tankPos=primary;
+      else if (!hitsWall(altX,TANK_RADIUS,true)) bot.tankPos=altX;
+      else if (!hitsWall(altY,TANK_RADIUS,true)) bot.tankPos=altY;
       else if (bot._dirTimer<=0) {bot._direction=Math.random()*Math.PI*2;bot._dirTimer=.8+Math.random()*1.5;}
       bot.tankBodyAngle=Math.atan2(toY,toX); bot.tankTurretAngle=bot.tankBodyAngle;
-      if (bot._cooldown<=0 && dist<530*LOCAL_SPEED_SCALE) {localShoot(bot,Math.atan2(toY,toX),'NormalBullet');bot._cooldown=1.6+Math.random()*.8;}
+      if (bot._cooldown<=0 && dist<530) {localShoot(bot,Math.atan2(toY,toX),'NormalBullet');bot._cooldown=1.6+Math.random()*.8;}
     });
 
-    g.bullets.forEach(b=>{
-      b.life-=dt; const nx=b.pos.vx+b.vel.vx*dt, ny=b.pos.vy+b.vel.vy*dt;
-      if (nx<12||nx>localMap.width-12) {b.vel.vx*=-1;b.bounces++;b.pos.vx=clamp(nx,12,localMap.width-12);} else b.pos.vx=nx;
-      if (ny<12||ny>localMap.height-12) {b.vel.vy*=-1;b.bounces++;b.pos.vy=clamp(ny,12,localMap.height-12);} else b.pos.vy=ny;
-      if (b.type!=='WallPiercingBullet' && collidesLocalMap(b.pos,12)) b.life=0;
-      if (b.owner===player.tankId) {
-        for (const bot of g.tanks.slice(1)) if (bot.tankAlive && distance(bot.tankPos,b.pos)<LOCAL_TANK_RADIUS+14) {
-          bot.tankAlive=false;bot._respawn=2.3;player.tankKills++;player.tankScore++;g.kills++;g.score+=100;b.life=0;playSfx('explosion', .47);addFeed(`${player.tankId} hạ ${bot.tankId}!`,'warn');break;
-        }
-      } else if (player.tankAlive && distance(player.tankPos,b.pos)<LOCAL_TANK_RADIUS+14) {
-        b.life=0;g.lives--;playSfx('explosion', .62);addFeed(`${b.owner} bắn trúng bạn. Còn ${g.lives} mạng!`,'warn');
-        if(g.lives<=0){
-          g.gameOver=true;
-          setMovementSound(false);
-          playSfx('gameover', .66);
-          showPostMatch({ title:'XE TĂNG BỊ HẠ', summary:'Bạn đã dùng hết mạng trong bài thực hành.', kills:g.kills, score:g.score, map:localMap.label, scores:g.tanks.map(t=>[t.tankId,t.tankScore]) });
-        } else {
-          player.tankAlive = false;
-          g.spectatorTankId = b.owner;
-          g.respawnTimer = Number(TEST_GAME.playerRespawnSeconds || 5);
-          addFeed(`Bạn bị hạ. Đang theo dõi ${b.owner} trong 5 giây.`, 'warn');
-        }
-      }
-    });
-    g.bullets=g.bullets.filter(b=>b.life>0&&b.bounces<=4);
-    if (!g.gameOver && g.kills >= TEST_GAME.winKills) {
-      g.gameOver = true;
-      setMovementSound(false);
-      playSfx('winner', .66);
-      showPostMatch({ title:'NHIỆM VỤ HOÀN TẤT', summary:`Bạn đã hạ ${g.kills} bot trong phòng thử.`, kills:g.kills, score:g.score, map:localMap.label, scores:g.tanks.map(t=>[t.tankId,t.tankScore]) });
-      return;
-    }
     const curW = WORLD_W;
     const curH = WORLD_H;
     const internalWalls = (maze && maze.mazeWalls ? maze.mazeWalls : []).slice(4);
@@ -1386,24 +958,6 @@
 
   function localShoot(tank, angle, type) {
     if (!localGame) return;
-    const sound = type === 'LaserBullet' ? 'laserShot' : type === 'GatlingBullet' ? 'gatlingShot' : type === 'WallPiercingBullet' ? 'piercingShot' : 'normalShot';
-    playSfx(sound, tank.tankId === localGame.name ? .43 : .16);
-    const muzzleOffset = LOCAL_TANK_SIZE * .44 * Number(TEST_GAME.tankRenderScale || .5);
-    const origin={vx:tank.tankPos.vx+Math.cos(angle)*muzzleOffset,vy:tank.tankPos.vy+Math.sin(angle)*muzzleOffset};
-    const add=(a,speed=390)=>localGame.bullets.push({pos:{...origin},vel:{vx:Math.cos(a)*speed*LOCAL_SPEED_SCALE,vy:Math.sin(a)*speed*LOCAL_SPEED_SCALE},type,owner:tank.tankId,life:4,bounces:0});
-    if(type==='ShotgunBullet'){add(angle-.22,340);add(angle,365);add(angle+.22,340);}
-    else if(type==='GatlingBullet'){add(angle,410);add(angle+.04,410);}
-    else if(type==='LaserBullet'){add(angle,570);}
-    else if(type==='WallPiercingBullet'){add(angle,350);}
-    else add(angle,400);
-  }
-
-  function moveLocalTank(tank, deltaX, deltaY) {
-    const pos = tank.tankPos;
-    const nextX = { vx: pos.vx + deltaX, vy: pos.vy };
-    const nextY = { vx: pos.vx, vy: pos.vy + deltaY };
-    if (!collidesLocalMap(nextX, LOCAL_TANK_RADIUS)) pos.vx = nextX.vx;
-    if (!collidesLocalMap(nextY, LOCAL_TANK_RADIUS)) pos.vy = nextY.vy;
     SoundFX.shoot(type);
     const dir = { vx: Math.cos(angle), vy: Math.sin(angle) };
     const pStart = { ...tank.tankPos };
@@ -1479,51 +1033,11 @@
     const walls = includeInner ? allW.slice(4) : [];
     return walls.some(w => pointWallDistance(pos, w) < radius + 3);
   }
-
-  function collidesLocalMap(pos, radius) {
-    if (!localMap || pos.vx < radius || pos.vx > localMap.width - radius || pos.vy < radius || pos.vy > localMap.height - radius) return true;
-    return localMap.collisionRects.some(rect => circleIntersectsRect(pos, radius, rect));
-  }
-
-  function circleIntersectsRect(pos, radius, rect) {
-    const x = clamp(pos.vx, rect.x, rect.x + rect.width);
-    const y = clamp(pos.vy, rect.y, rect.y + rect.height);
-    return (pos.vx - x) ** 2 + (pos.vy - y) ** 2 < radius ** 2;
-  }
-
-  function pickOpenLocalPoint(radius) {
-    for (let attempt = 0; attempt < 160; attempt++) {
-      const point = { vx: 190 + Math.random() * (localMap.width - 380), vy: 190 + Math.random() * (localMap.height - 380) };
-      if (!collidesLocalMap(point, radius)) return point;
-    }
-    return { ...getLocalSpawns(localMap)[0] };
-  }
-
-  function updateLocalCamera(pos, delta) {
-    if (!localMap) return;
-    const view = localViewSize();
-    const targetX = clamp(pos.vx - view.width / 2, 0, localMap.width - view.width);
-    const targetY = clamp(pos.vy - view.height / 2, 0, localMap.height - view.height);
-    const blend = Math.min(1, delta * 8);
-    camera.x += (targetX - camera.x) * blend;
-    camera.y += (targetY - camera.y) * blend;
-  }
-
-  function localViewSize() {
-    if (!localMap) return { width: WORLD_W, height: WORLD_H };
-    const targetWidth = WORLD_W / LOCAL_CAMERA_ZOOM;
-    const width = Math.min(targetWidth, localMap.width, localMap.height * WORLD_W / WORLD_H);
-    return { width, height: width * WORLD_H / WORLD_W };
-  }
-
-  function localWorldScale() { return WORLD_W / localViewSize().width; }
-  function localToScreen(pos) {
-    const scale = localWorldScale();
-    return { x: (pos.vx - camera.x) * scale, y: (pos.vy - camera.y) * scale };
-  }
-  function screenToLocalWorld(x, y) {
-    const scale = localWorldScale();
-    return { vx: camera.x + x / scale, vy: camera.y + y / scale };
+  function pointWallDistance(pos,wall) {
+    const a=wall.wallStart,b=wall.wallEnd,px=pos.vx,py=pos.vy;
+    const vx=b.vx-a.vx,vy=b.vy-a.vy,den=vx*vx+vy*vy;
+    const t=den?clamp(((px-a.vx)*vx+(py-a.vy)*vy)/den,0,1):0;
+    return Math.hypot(px-(a.vx+t*vx),py-(a.vy+t*vy));
   }
   function distance(a,b){return Math.hypot(a.vx-b.vx,a.vy-b.vy)}
   function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
@@ -1545,13 +1059,6 @@
   function stopRenderLoop(){if(animationId!==null){cancelAnimationFrame(animationId);animationId=null;} }
 
   function renderSnapshot(snapshot) {
-    if (!snapshot) return;
-    ctx.clearRect(0,0,WORLD_W,WORLD_H);
-    if (mode === 'offline' && localMap) {
-      renderOfflineSnapshot(snapshot);
-      return;
-    }
-    drawGround();
     resizeCanvasBacking();
     ctx.save();
     ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -1572,119 +1079,6 @@
     ctx.restore();
   }
 
-  function renderOfflineSnapshot(snapshot) {
-    const map = localMap;
-    const background = map.background;
-    const view = localViewSize();
-    if (background.complete && background.naturalWidth) {
-      ctx.drawImage(background, camera.x, camera.y, view.width, view.height, 0, 0, WORLD_W, WORLD_H);
-    } else {
-      ctx.fillStyle = '#172017';
-      ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-    }
-    const boxes = readField(snapshot, 'wsMysteryBoxes') || [];
-    boxes.forEach(box => { if (readField(box, 'mbActive') !== false) drawOfflineBox(readField(box, 'mbPos')); });
-    (readField(snapshot, 'wsBullets') || []).forEach(drawOfflineBullet);
-    (readField(snapshot, 'wsTanks') || []).filter(isOfflineTankVisible).forEach(drawOfflineTank);
-    drawFogOfWar();
-    drawOfflineHud(localGame);
-  }
-
-  function isOfflineTankVisible(tank) {
-    if (!localGame || readField(tank, 'tankAlive') === false) return false;
-    const observer = getOfflineCameraTank();
-    if (!observer || tank.tankId === observer.tankId) return true;
-    const targetPos = readField(tank, 'tankPos');
-    return !!targetPos && distance(observer.tankPos, targetPos) <= Number(TEST_GAME.enemyVisibilityRadius || 1120);
-  }
-
-  function getOfflineCameraTank() {
-    if (!localGame) return null;
-    const player = localGame.tanks[0];
-    if (player && player.tankAlive) return player;
-    return localGame.tanks.find(tank => tank.tankId === localGame.spectatorTankId && tank.tankAlive)
-      || localGame.tanks.slice(1).find(tank => tank.tankAlive)
-      || null;
-  }
-
-  function drawFogOfWar() {
-    const observer = getOfflineCameraTank();
-    if (!observer) return;
-    const screen = localToScreen(observer.tankPos);
-    const radius = Number(TEST_GAME.enemyVisibilityRadius || 1120) * localWorldScale();
-    const fogRadius = radius * 1.35;
-    const fog = ctx.createRadialGradient(screen.x, screen.y, radius * .88, screen.x, screen.y, fogRadius);
-    fog.addColorStop(0, 'rgba(4,9,5,0)');
-    fog.addColorStop(.20, 'rgba(4,9,5,0)');
-    fog.addColorStop(.64, 'rgba(4,9,5,.20)');
-    // The last stop keeps terrain readable while clearly fogging the outer map.
-    fog.addColorStop(1, 'rgba(4,9,5,.58)');
-    ctx.save();
-    ctx.fillStyle = fog;
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-    ctx.strokeStyle = 'rgba(224,244,193,.16)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawOfflineTank(tank) {
-    if (readField(tank, 'tankAlive') === false) return;
-    const pos = readField(tank, 'tankPos'); if (!pos) return;
-    const screen = localToScreen({ vx: Number(readField(pos, 'vx') || 0), vy: Number(readField(pos, 'vy') || 0) });
-    const x = screen.x, y = screen.y;
-    const color = COLORS[readField(tank, 'tankColor')] || '#8ae65e';
-    const bodyAngle = Number(readField(tank, 'tankBodyAngle') || 0);
-    const turretAngle = Number(readField(tank, 'tankTurretAngle') || 0);
-    const size = localMap.tankSize * localMap.tankScale * Number(TEST_GAME.tankRenderScale || .5) * localWorldScale();
-    ctx.save(); ctx.translate(x, y);
-    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(8, 10, size*.33, size*.41, 0, 0, Math.PI*2); ctx.fill();
-    const hull = images.hull;
-    if (hull && hull.complete && hull.naturalWidth) {
-      ctx.save(); ctx.rotate(bodyAngle + Math.PI / 2); drawTinted(hull, color, -size/2, -size/2, size, size); ctx.restore();
-    } else {
-      ctx.fillStyle = color; ctx.fillRect(-size*.29, -size*.38, size*.58, size*.76);
-    }
-    const gun = images.gun;
-    if (gun && gun.complete && gun.naturalWidth) {
-      ctx.save(); ctx.rotate(turretAngle + Math.PI / 2); drawTinted(gun, color, -size/2, -size/2, size, size); ctx.restore();
-    }
-    ctx.restore();
-  }
-
-  function drawOfflineBullet(bullet) {
-    const pos = readField(bullet, 'bulPos'); if (!pos) return;
-    const type = readField(bullet, 'bulType') || 'NormalBullet';
-    const screen = localToScreen({ vx: Number(readField(pos, 'vx') || 0), vy: Number(readField(pos, 'vy') || 0) });
-    const x = screen.x, y = screen.y;
-    const color = type === 'LaserBullet' ? '#82f9ff' : type === 'ShotgunBullet' ? '#ffca73' : type === 'WallPiercingBullet' ? '#c39aff' : type === 'GatlingBullet' ? '#ff9658' : '#e6efc4';
-    const radius = Math.max(2, (type === 'ShotgunBullet' ? 9 : 7) * localWorldScale());
-    ctx.save(); ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 12; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI*2); ctx.fill(); ctx.restore();
-  }
-
-  function drawOfflineBox(pos) {
-    if (!pos) return;
-    const screen = localToScreen({ vx: Number(readField(pos, 'vx') || 0), vy: Number(readField(pos, 'vy') || 0) });
-    const x = screen.x, y = screen.y;
-    const size = 56 * localWorldScale();
-    const image = images.box;
-    ctx.save(); ctx.shadowColor = '#f3d466'; ctx.shadowBlur = 18;
-    if (image && image.complete && image.naturalWidth) ctx.drawImage(image, x-size/2, y-size/2, size, size);
-    else { ctx.fillStyle = '#e1bc4e'; ctx.fillRect(x-size*.4, y-size*.4, size*.8, size*.8); ctx.fillStyle='#132013';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText('?',x,y+4); }
-    ctx.restore();
-  }
-
-  function drawGround(){
-    ctx.fillStyle='#1d3020';ctx.fillRect(0,0,WORLD_W,WORLD_H);
-    ctx.fillStyle='rgba(126,163,100,.035)';
-    for(let y=0;y<WORLD_H;y+=32)for(let x=0;x<WORLD_W;x+=32)if(((x/32+y/32)%2)===0)ctx.fillRect(x,y,32,32);
-    ctx.strokeStyle='rgba(167,205,137,.075)';ctx.lineWidth=1;
-    for(let x=0;x<=WORLD_W;x+=32){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,WORLD_H);ctx.stroke();}
-    for(let y=0;y<=WORLD_H;y+=32){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(WORLD_W,y);ctx.stroke();}
-    // Subtle worn ground flecks make the map less like an empty grid.
-    for(let i=0;i<55;i++){const x=(i*137+33)%WORLD_W,y=(i*79+19)%WORLD_H;ctx.fillStyle='rgba(182,208,143,.045)';ctx.fillRect(x,y,2,2);}
   function drawGround(w = WORLD_W, h = WORLD_H){
     ctx.fillStyle='#1d3020';ctx.fillRect(0,0,w,h);
     ctx.fillStyle='rgba(126,163,100,.04)';
@@ -1724,7 +1118,7 @@
     if(readField(tank,'tankAlive')===false)return;
     const pos=readField(tank,'tankPos');if(!pos)return;
     const x=Number(readField(pos,'vx')||0),y=height-Number(readField(pos,'vy')||0);
-    const colorName=readField(tank,'tankColor')||'TankGreen';
+    const id=readField(tank,'tankId')||'PLAYER',colorName=readField(tank,'tankColor')||'TankGreen';
     const color=COLORS[colorName]||'#8ae65e';
     const bodyAngle=Number(readField(tank,'tankBodyAngle')||0),turretAngle=Number(readField(tank,'tankTurretAngle')||0);
     ctx.save();ctx.translate(x,y);
@@ -1738,12 +1132,14 @@
     const gun=images.gun;
     if(gun&&gun.complete&&gun.naturalWidth){ctx.save();ctx.rotate(Math.PI/2-turretAngle);drawTinted(gun,color,-7,-18,14,36);ctx.restore();}
     else {ctx.save();ctx.rotate(-turretAngle);ctx.fillStyle=color;ctx.fillRect(-3,-22,6,24);ctx.beginPath();ctx.arc(0,0,7,0,Math.PI*2);ctx.fill();ctx.restore();}
+    ctx.fillStyle='#e8f3e0';ctx.font='9px "IBM Plex Mono",monospace';ctx.textAlign='center';ctx.shadowColor='#0a100b';ctx.shadowBlur=4;ctx.fillText(String(id).slice(0,18),0,-29);ctx.shadowBlur=0;
     ctx.restore();
   }
 
   function drawTinted(img,color,x,y,w,h){
-    // Keep the supplied sprite intact; color overlays created opaque rectangles.
+    // Draw the source art as-is and place a restrained colored marker; avoid washing out sprite details.
     ctx.drawImage(img,x,y,w,h);
+    ctx.save();ctx.globalCompositeOperation='source-atop';ctx.globalAlpha=.24;ctx.fillStyle=color;ctx.fillRect(x,y,w,h);ctx.restore();
   }
   function drawVectorHull(color,angle){ctx.save();ctx.rotate(Math.PI/2-angle);ctx.fillStyle='#1c2921';ctx.fillRect(-10,-17,20,34);ctx.fillStyle=color;ctx.fillRect(-7,-15,14,30);ctx.fillStyle='#101811';ctx.fillRect(-3,-11,6,20);ctx.restore();}
 
@@ -1763,20 +1159,6 @@
     ctx.restore();
   }
   function drawLaser(a,b,height){if(!a||!b)return;const x1=Number(readField(a,'vx')||0),y1=height-Number(readField(a,'vy')||0),x2=Number(readField(b,'vx')||0),y2=height-Number(readField(b,'vy')||0);ctx.save();ctx.strokeStyle='#89faff';ctx.shadowColor='#89faff';ctx.shadowBlur=12;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();}
-  function drawVignette(){const grad=ctx.createRadialGradient(WORLD_W/2,WORLD_H/2,80,WORLD_W/2,WORLD_H/2,Math.max(WORLD_W,WORLD_H)*.75);grad.addColorStop(0,'rgba(0,0,0,0)');grad.addColorStop(1,'rgba(4,10,5,.33)');ctx.fillStyle=grad;ctx.fillRect(0,0,WORLD_W,WORLD_H);}
-  function drawOfflineHud(g){
-    const x = 20, y = WORLD_H - 66;
-    if (g.reloadTimer > 0) {
-      const frame = 1 + Math.floor(g.time * 12) % 8;
-      const image = hudImages[`loading-${frame}`];
-      if (image && image.complete && image.naturalWidth) ctx.drawImage(image, x, y, 56, 56);
-      return;
-    }
-    String(Math.max(0, Math.floor(g.ammo))).split('').forEach((digit, index) => {
-      const image = hudImages[`digit-${digit}`];
-      if (image && image.complete && image.naturalWidth) ctx.drawImage(image, x + index * 37, y, 34, 52);
-    });
-  }
   function drawVignette(w = WORLD_W, h = WORLD_H){const grad=ctx.createRadialGradient(w/2,h/2,80,w/2,h/2,Math.max(w,h)*.75);grad.addColorStop(0,'rgba(0,0,0,0)');grad.addColorStop(1,'rgba(4,10,5,.33)');ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);}
   function drawOfflineHud(g){ctx.save();ctx.fillStyle='rgba(7,13,8,.74)';ctx.fillRect(14,14,144,45);ctx.strokeStyle='rgba(199,243,107,.4)';ctx.strokeRect(14,14,144,45);ctx.fillStyle='#9caf94';ctx.font='8px "IBM Plex Mono",monospace';ctx.fillText('MẠNG CÒN LẠI',25,29);ctx.fillStyle='#c7f36b';ctx.font='bold 20px "Barlow Condensed",sans-serif';ctx.fillText('♥ '.repeat(Math.max(0,g.lives))+' '.repeat(Math.max(0,5-g.lives)),25,49);ctx.restore();}
 
@@ -1818,7 +1200,6 @@
   function updateCurrentInput(){
     if(mode!=='online'||!wsReady||!loggedIn||screenName!=='game')return;
     const snapshot=latestSnapshot;if(!snapshot)return;
-    setMovementSound(input.up || input.down || input.left || input.right);
     const tanks=readField(snapshot,'wsTanks')||[];const me=tanks.find(t=>readField(t,'tankId')===username)||tanks[0];if(!me)return;
     const pos=readField(me,'tankPos')||{vx:0,vy:0};
     const mouseWorldX=input.mouseX,mouseWorldY=WORLD_H-input.mouseY;
@@ -1832,37 +1213,6 @@
   document.addEventListener('keydown',e=>{
     if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
     setKey(e.key,true);
-    if(e.key==='Escape'&&screenName==='game') e.preventDefault();
-  });
-  document.addEventListener('keyup',e=>setKey(e.key,false));
-  window.addEventListener('blur',()=>{input.up=input.down=input.left=input.right=input.fire=false;document.body.classList.remove('mouse-pressed');setMovementSound(false);});
-  canvas.addEventListener('mousemove',e=>{const rect=canvas.getBoundingClientRect();input.mouseX=(e.clientX-rect.left)/rect.width*WORLD_W;input.mouseY=(e.clientY-rect.top)/rect.height*WORLD_H;});
-  canvas.addEventListener('mousedown',e=>{if(e.button===0){canvas.focus({ preventScroll: true });input.fire=true;document.body.classList.add('mouse-pressed');}});
-  window.addEventListener('mouseup',e=>{if(e.button===0){input.fire=false;document.body.classList.remove('mouse-pressed');}});
-  canvas.addEventListener('contextmenu',e=>e.preventDefault());
-
-  function quitGame(){
-    window.close();
-    window.setTimeout(()=>{ if (!window.closed) window.location.replace('about:blank'); }, 120);
-  }
-
-  $('online-button').addEventListener('click',()=>openTankSelect('connect'));
-  $('practice-button').addEventListener('click',()=>openTankSelect('offline'));
-  $('main-exit').addEventListener('click',quitGame);
-  $('map-back').addEventListener('click',()=>showScreen('home'));
-  document.querySelectorAll('[data-map]').forEach(button=>button.addEventListener('click',()=>chooseOfflineMap(button.dataset.map)));
-  $('tank-select-back').addEventListener('click',closeTankSelect);
-  $('tank-confirm').addEventListener('click',confirmTankSelection);
-  document.querySelectorAll('[data-hull]').forEach(button=>button.addEventListener('click',()=>{
-    selectedHullId = button.dataset.hull || '05';
-    refreshTankAssembly();
-  }));
-  document.querySelectorAll('[data-gun]').forEach(button=>button.addEventListener('click',()=>{
-    selectedGunId = button.dataset.gun || '05';
-    refreshTankAssembly();
-  }));
-  $('results-exit').addEventListener('click',exitResultsToHome);
-  $('brand-home').addEventListener('click',e=>{e.preventDefault();if(screenName!=='game')showScreen('home');});
     if(e.key==='Escape'&&screenName==='game'){
       e.preventDefault();
       togglePauseModal();
@@ -1933,18 +1283,12 @@
   $('brand-home').addEventListener('click',e=>{e.preventDefault();if(screenName==='game')togglePauseModal();else showScreen('home');});
   $('refresh-rooms').addEventListener('click',()=>{setError('lobby-error','');sendMessage('CListRooms');});
   $('create-button').addEventListener('click',createRoom);
-  $('create-test-button').addEventListener('click',()=>openTankSelect('offline'));
   $('join-button').addEventListener('click',joinRoom);
   $('join-id').addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);});
   $('join-id').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom();});
-  $('start-button').addEventListener('click',()=>{unlockAudio();setError('lobby-error','');if(!isHost){setError('lobby-error','Chỉ chủ phòng mới có thể bắt đầu.');return;}enterGameplayFullscreen();sendMessage('CStartGame');});
+  $('start-button').addEventListener('click',()=>{setError('lobby-error','');if(!isHost){setError('lobby-error','Chỉ chủ phòng mới có thể bắt đầu.');return;}sendMessage('CStartGame');});
   $('leave-room').addEventListener('click',()=>{if(wsReady&&activeRoom)sendMessage('CLeaveRoom');else{activeRoom=null;showScreen('lobby');}});
   $('lobby-back').addEventListener('click',()=>{if(activeRoom)sendMessage('CLeaveRoom');else{closeSocket();showScreen('home');}});
-  $('copy-room-code').addEventListener('click',async()=>{const code=$('room-code').textContent;try{await navigator.clipboard.writeText(code);$('copy-room-code').textContent='✓';setTimeout(()=>$('copy-room-code').textContent='⧉',900);}catch(_){$('join-id').value=code;}});
-  $('overlay-action').addEventListener('click',()=>{if(roundOverlayAction)roundOverlayAction();});
-  document.addEventListener('pointerdown', unlockAudio, { once: true });
-  document.addEventListener('click',event=>{if(event.target.closest('button') && event.target.closest('#sound-toggle')===null)playSfx('click',.24);});
-  $('sound-toggle').addEventListener('click',()=>{soundEnabled=!soundEnabled;refreshSoundToggle();setMovementSound(false);syncMusicForScreen();if(soundEnabled)playSfx('click',.3);});
   $('pause-open-btn')?.addEventListener('click',togglePauseModal);
   $('pause-resume-btn')?.addEventListener('click',hidePauseModal);
   $('pause-leave-btn')?.addEventListener('click',leaveCurrentMatch);
@@ -1974,8 +1318,6 @@
   // Small defaults are remembered locally for the next session.
   $('player-name').value=localStorage.getItem('tankwar-name')||'';
   $('server-url').value=localStorage.getItem('tankwar-server')||'ws://localhost:8080';
-  refreshTankAssembly();
-  refreshSoundToggle();
   setTimeout(()=>{if(screenName==='game'&&mode==='online')startInputSender();},0);
 
   // Start/stop the network input sender when the online game view is entered.
