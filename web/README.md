@@ -4,7 +4,7 @@
 
 ## 1. Chạy nhanh ở chế độ offline
 
-Cần một static web server. Từ thư mục gốc `LTH-TankWar-HaskellGame`, mở PowerShell/CMD và chạy:
+Cần Python 3 hoặc một static web server. Từ thư mục gốc `LTH-TankWar-HaskellGame-frontend`, mở PowerShell/CMD và chạy:
 
 ```powershell
 py -m http.server 5173
@@ -16,17 +16,9 @@ Mở trình duyệt tại:
 http://localhost:5173/web/
 ```
 
-Nhập tên chiến binh rồi nhấn **TẠO PHÒNG THỬ**, chọn Forest, Ruins hoặc Depot, sau đó đặt tên/chọn xe. Chế độ này ghép bạn với 3 bot cục bộ để kiểm tra map, không cần MongoDB hay server Haskell. Điều khiển: `W/A/S/D` để di chuyển, chuột để ngắm, click trái hoặc `Space` để bắn. Gameplay không hiển thị menu hoặc nút Exit; báo cáo sau trận có nút trở về trang chủ.
+Nhập tên chiến binh rồi nhấn **CHƠI THỬ NGAY**. Chế độ này chạy mô phỏng cục bộ trong trình duyệt, không cần MongoDB hay server Haskell. Điều khiển: `W/A/S/D` để di chuyển, chuột để ngắm, click trái hoặc `Space` để bắn, `Esc` để mở lựa chọn rời trận.
 
 > Nếu lệnh `py` không tồn tại trên máy, cài Python 3 hoặc dùng một static server khác. Nên chạy qua `http://localhost` thay vì mở trực tiếp file HTML.
-
-Nếu đã có Node.js, project cũng kèm preview server không cần cài package. Đây là lệnh cho bản preview hiện tại:
-
-```powershell
-node web/preview-server.js 4173
-```
-
-Mở [http://127.0.0.1:4173/](http://127.0.0.1:4173/). Nhạc menu bắt đầu ở lần click đầu tiên vì trình duyệt không cho phép tự phát âm thanh trước một thao tác của người chơi. Khi xác nhận xe, trình duyệt sẽ yêu cầu fullscreen; nếu bị từ chối, khung game vẫn tự lấp toàn bộ viewport.
 
 ## 2. Kết nối online với Haskell server hiện có
 
@@ -63,12 +55,6 @@ Frontend tĩnh có thể triển khai từ riêng thư mục `web/` lên hosting
 
 ## 3. Tính năng & Cải tiến mới
 
-- Offline Practice là chế độ huấn luyện cục bộ để test giao diện và thao tác; bot/va chạm ở chế độ này là mô phỏng JavaScript, không phải game state authoritative của server.
-- File `testgame.js` tập trung các thông số tạm cho bản test: zoom camera `0.2` (nhìn xa gấp 5), tank hiển thị `0.5` với hitbox test `60px`, 3 bot, hồi sinh 5 giây và mốc thắng 6 hạ gục để thử màn kết quả. Backend có thể bỏ file này cùng luồng test khi đã sẵn sàng; cơ chế random map online không bị frontend thay đổi.
-- Online mode dùng Haskell backend hiện tại. Nếu backend hoặc MongoDB chưa chạy, đăng nhập online sẽ thất bại; bạn vẫn có thể chơi offline.
-- Ba map luyện tập nằm tại `assets/maps/`. Frontend tải `*_layout.json` để dùng `wall_rectangles` và `blocked_cells` cho va chạm; `*_maze_4096.png` chỉ được dùng làm background đã bake sẵn. Vì vậy hãy chạy qua static HTTP server thay vì mở `index.html` trực tiếp.
-- Mã nguồn server chỉ gửi tên người chơi khi họ tham gia sau khi bạn đã vào phòng. Với người chơi đã ở trong phòng trước đó, giao diện phòng chờ tạm hiển thị slot chờ đồng bộ đến khi snapshot trận đấu bắt đầu. Muốn có danh sách roster đầy đủ ngay trong lobby, cần bổ sung thông điệp roster ở backend.
-- Phần server yêu cầu tối thiểu 2 người cho `CStartGame`; client hiện tuân thủ giới hạn này.
 - **Đồng bộ danh sách phòng chờ (Lobby Roster Sync):** Đã bổ sung gói tin `SRoomRoster` ở cả Haskell Server và Web Client. Người chơi vào sau sẽ lập tức nhận danh sách đầy đủ tất cả chiến binh kèm màu xe và chủ phòng.
 - **Hệ thống âm thanh Web Audio SoundFX:** Tổng hợp âm thanh procedural (tiếng súng riêng biệt cho 5 loại đạn, tiếng nảy tường, tiếng nổ xe tăng, tiếng nhặt hộp quà, âm thanh đếm ngược và nhạc chiến thắng), có nút bật/tắt tiện lợi `♫`.
 - **Offline Practice:** Chế độ huấn luyện cục bộ chạy ngay trên Canvas/JS với bot di chuyển và né vật cản, không cần cài đặt server hay database.
@@ -78,9 +64,5 @@ Frontend tĩnh có thể triển khai từ riêng thư mục `web/` lên hosting
 
 - `index.html`: các màn hình menu, lobby, phòng chờ và trận đấu.
 - `style.css`: giao diện responsive.
-- `app.js`: Canvas renderer, chế độ offline 4096 có camera/tầm nhìn giới hạn, fullscreen và WebSocket protocol client.
-- `testgame.js`: cấu hình/browser-only dành cho phòng thử với bot, tách khỏi protocol backend.
-- `assets/maps/`: layout JSON và background 4096 gốc cho Forest, Ruins, Depot.
-- `assets/menu/`: background, khung đặt tên, nút bắt đầu/thoát và bảng điểm từ folder Menu/MenuEnd.
-- `assets/audio/`: nhạc menu/trận/kết quả và toàn bộ hiệu ứng âm thanh.
-- `assets/img/`: sprite tank/mystery box dùng cho client độc lập.
+- `app.js`: Canvas renderer, chế độ offline và WebSocket protocol client.
+- `assets/img/`: các sprite nhỏ được sao chép từ thư mục assets của dự án để frontend dễ triển khai độc lập.
