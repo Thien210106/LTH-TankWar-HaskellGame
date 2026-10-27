@@ -23,14 +23,14 @@ dt = 1.0 / fromIntegral tickRate    -- ≈ 0.01667s
 
 -- | Thời gian hồi đạn thường sau mỗi phát bắn (giây).
 normalBulletCooldown :: Float
-normalBulletCooldown = 1.0
+normalBulletCooldown = 0.5
 
 -- | Thời gian hồi đạn sự kiện / đạn đặc biệt từ Mystery Box (giây).
 specialBulletCooldown :: Float
-specialBulletCooldown = 2.0
+specialBulletCooldown = 1.0
 
 -- | Hàm tính thời gian hồi đạn theo loại vũ khí:
--- Đạn thường 1.0 giây, đạn sự kiện Mystery Box 2.0 giây.
+-- Đạn thường 0.5 giây, đạn sự kiện Mystery Box 1.0 giây.
 weaponCooldown :: BulletType -> Float
 weaponCooldown NormalBullet = normalBulletCooldown
 weaponCooldown _            = specialBulletCooldown
@@ -69,7 +69,7 @@ wallPiercingSpeed = 350.0
 
 -- | Số lần đạn thường được phép nảy tường trước khi biến mất.
 maxBulletBounces :: Int
-maxBulletBounces = 3
+maxBulletBounces = 5
 
 -- | Thời gian sống tối đa của đạn (giây).
 bulletMaxLifetime :: Float
@@ -129,11 +129,11 @@ cellSize = 64.0
 
 -- | Chiều rộng bản đồ mê cung mặc định (pixel).
 defaultMazeWidth :: Float
-defaultMazeWidth = 832.0    -- 13 ô * 64px
+defaultMazeWidth = 1344.0   -- 21 ô * 64px
 
 -- | Chiều cao bản đồ mê cung mặc định (pixel).
 defaultMazeHeight :: Float
-defaultMazeHeight = 576.0   -- 9 ô * 64px
+defaultMazeHeight = 704.0   -- 11 ô * 64px
 
 -- | Độ dày tường (dùng cho render, collider dùng segment).
 wallThickness :: Float
@@ -181,7 +181,7 @@ defaultMongoPort = 27017
 
 -- | Tên database MongoDB.
 mongoDbName :: String
-mongoDbName = "tankwar_db"
+mongoDbName = "TankWar"
 
 -- | Khoảng thời gian ping WebSocket (giây).
 wsPingInterval :: Int
