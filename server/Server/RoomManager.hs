@@ -10,6 +10,7 @@ module Server.RoomManager
   , generateRoomId
   , generateMaze
   , assignTankColor
+  , shuffleList
   ) where
 
 import Control.Concurrent.STM
@@ -47,8 +48,10 @@ handleCreateRoom ss username roomName maxP password = do
       -- Tạo mê cung
       maze <- generateMaze
 
-      -- Tạo xe tăng cho người tạo phòng
-      let spawnPt = head (mazeSpawnPts maze)
+      -- Tạo xe tăng cho người tạo phòng (vị trí ngẫu nhiên trên map)
+      let spawnPts = mazeSpawnPts maze
+      pickIdx <- randomRIO (0, max 0 (length spawnPts - 1))
+      let spawnPt = if null spawnPts then Vec2 100 100 else spawnPts !! pickIdx
           tank = mkTank username spawnPt TankRed
 
       -- Tạo phòng mới
@@ -77,6 +80,7 @@ handleCreateRoom ss username roomName maxP password = do
 
       let info = roomToInfo room
       sendToClient ss username (SRoomCreated info)
+      sendToClient ss username (SRoomRoster [(username, TankRed)])
       putStrLn $ "[Room] Phòng " ++ show rid ++ " được tạo bởi " ++ show username
 
 --------------------------------------------------------------------------------
@@ -117,9 +121,11 @@ doJoin ss username room = do
       playerIdx = length (rsPlayerIds room)
       color     = assignTankColor playerIdx
       spawnPts  = mazeSpawnPts (rsMaze room)
-      spawnPt   = if playerIdx < length spawnPts
-                  then spawnPts !! playerIdx
-                  else Vec2 100 100  -- fallback
+      existingPositions = map tankPos (Map.elems (rsTanks room))
+      freeSpawns = filter (\pt -> all (\ep -> vec2Dist pt ep > 60) existingPositions) spawnPts
+      availSpawns = if null freeSpawns then spawnPts else freeSpawns
+  pickIdx <- randomRIO (0, max 0 (length availSpawns - 1))
+  let spawnPt   = if null availSpawns then Vec2 100 100 else availSpawns !! pickIdx
       tank      = mkTank username spawnPt color
 
   atomically $ do
@@ -136,6 +142,8 @@ doJoin ss username room = do
     Just r  -> do
       let info = roomToInfo r
       sendToClient ss username (SRoomJoined info)
+      let roster = [(pid, maybe TankBlue tankColor (Map.lookup pid (rsTanks r))) | pid <- rsPlayerIds r]
+      sendToClient ss username (SRoomRoster roster)
       -- Thông báo cho người chơi khác
       broadcastToRoom ss rid (SPlayerJoined username color)
       putStrLn $ "[Room] " ++ show username ++ " vào phòng " ++ show rid
@@ -209,12 +217,30 @@ handleStartGame ss username = do
                      (SRoomError $ "Cần ít nhất " <> pack (show minPlayersToStart)
                                 <> " người chơi!")
               else do
-                -- Chuyển sang Countdown
+                -- Sinh mê cung ngẫu nhiên cho trận đấu mới và xáo trộn vị trí spawn
+                newMaze <- generateMaze
+                let spawns = mazeSpawnPts newMaze
+                    pids   = rsPlayerIds room
+                shuffledSpawns <- shuffleList spawns
+                let tanks' = Map.fromList
+                      [ (pid, (rsTanks room Map.! pid)
+                          { tankPos    = if idx < length shuffledSpawns
+                                         then shuffledSpawns !! idx
+                                         else Vec2 100 100
+                          , tankVel    = vec2Zero
+                          , tankWeapon = defaultWeaponState
+                          , tankAlive  = True
+                          })
+                      | (idx, pid) <- zip [0..] pids
+                      ]
+                -- Chuyển sang Countdown với mê cung và vị trí mới
                 atomically $ modifyRoom ss rid $ \r -> r
-                  { rsPhase = CountdownPhase countdownDuration
+                  { rsMaze  = newMaze
+                  , rsTanks = tanks'
+                  , rsPhase = CountdownPhase countdownDuration
                   }
                 broadcastToRoom ss rid (SCountdown countdownDuration)
-                putStrLn $ "[Game] Phòng " ++ show rid ++ " bắt đầu countdown!"
+                putStrLn $ "[Game] Phòng " ++ show rid ++ " bắt đầu countdown với mê cung mới!"
 
 --------------------------------------------------------------------------------
 -- Liệt kê phòng
@@ -302,12 +328,21 @@ mkTank pid spawnPos color = Tank
 -- Sinh mê cung (Maze Generation)
 --------------------------------------------------------------------------------
 
--- | Tạo mê cung mặc định với tường bao quanh và các vách ngăn bên trong.
--- Trong phiên bản hoàn chỉnh, có thể thay bằng thuật toán random maze.
+-- | Xáo trộn ngẫu nhiên một danh sách
+shuffleList :: [a] -> IO [a]
+shuffleList [] = return []
+shuffleList xs = do
+  idx <- randomRIO (0, length xs - 1)
+  let (before, x:after) = splitAt idx xs
+  rest <- shuffleList (before ++ after)
+  return (x : rest)
+
+-- | Tạo mê cung ngẫu nhiên với tường dày đặc phong phú (Labyrinth)
+-- và các điểm spawn ngẫu nhiên trên toàn bộ bản đồ.
 generateMaze :: IO Maze
 generateMaze = do
-  let w = defaultMazeWidth
-      h = defaultMazeHeight
+  let w  = defaultMazeWidth
+      h  = defaultMazeHeight
       cs = cellSize
 
       -- Tường bao quanh (4 cạnh)
@@ -318,52 +353,95 @@ generateMaze = do
         , Wall (Vec2 0 h) (Vec2 0 0)     -- Trái
         ]
 
-      -- Vách ngăn bên trong (tạo mê cung thú vị)
-      -- Layout thiết kế tay cho gameplay cân bằng
-      innerWalls =
-        -- Hàng ngang giữa
-        [ Wall (Vec2 (2*cs) (3*cs)) (Vec2 (4*cs) (3*cs))
-        , Wall (Vec2 (5*cs) (3*cs)) (Vec2 (7*cs) (3*cs))
-        , Wall (Vec2 (6*cs) (6*cs)) (Vec2 (8*cs) (6*cs))
-        , Wall (Vec2 (9*cs) (3*cs)) (Vec2 (11*cs) (3*cs))
-        -- Hàng ngang trên/dưới
-        , Wall (Vec2 (3*cs) (2*cs)) (Vec2 (5*cs) (2*cs))
-        , Wall (Vec2 (8*cs) (2*cs)) (Vec2 (10*cs) (2*cs))
-        , Wall (Vec2 (3*cs) (7*cs)) (Vec2 (5*cs) (7*cs))
-        , Wall (Vec2 (8*cs) (7*cs)) (Vec2 (10*cs) (7*cs))
-        -- Cột dọc
-        , Wall (Vec2 (2*cs) (1*cs)) (Vec2 (2*cs) (3*cs))
-        , Wall (Vec2 (11*cs) (1*cs)) (Vec2 (11*cs) (3*cs))
-        , Wall (Vec2 (2*cs) (6*cs)) (Vec2 (2*cs) (8*cs))
-        , Wall (Vec2 (11*cs) (6*cs)) (Vec2 (11*cs) (8*cs))
-        -- Trung tâm
-        , Wall (Vec2 (6*cs) (4*cs)) (Vec2 (6*cs) (5*cs))
-        , Wall (Vec2 (7*cs) (4*cs)) (Vec2 (7*cs) (5*cs))
-        , Wall (Vec2 (5*cs) (4.5*cs)) (Vec2 (6*cs) (4.5*cs))
-        , Wall (Vec2 (7*cs) (4.5*cs)) (Vec2 (8*cs) (4.5*cs))
+      wH x1 x2 y = Wall (Vec2 (x1*cs) (y*cs)) (Vec2 (x2*cs) (y*cs))
+      wV x y1 y2 = Wall (Vec2 (x*cs) (y1*cs)) (Vec2 (x*cs) (y2*cs))
+
+      -- 4 Mẫu Mê Cung Rối Chiến Thuật: Tường cả dọc lẫn ngang, không song song, luôn có khe hở thoát hiểm
+      -- Mẫu 1: The Tangled Labyrinth
+      layout1 =
+        [ wH 3 11 1, wH 13 20 1, wH 1 3 2, wH 11 17 2, wH 17 20 3
+        , wH 7 12 4, wH 13 17 4, wH 3 6 5, wH 17 19 5, wH 5 12 6
+        , wH 15 17 6, wH 1 6 7, wH 9 13 8, wH 1 11 10, wH 15 20 10
+        , wV 1 3 9, wV 2 1 3, wV 3 3 9, wV 4 1 4, wV 6 1 5
+        , wV 6 7 10, wV 7 5 9, wV 8 1 3, wV 8 7 10, wV 9 5 9
+        , wV 10 1 4, wV 11 7 9, wV 12 1 7, wV 13 3 10, wV 14 5 10
+        , wV 15 3 10, wV 17 5 9, wV 18 1 3, wV 18 7 10, wV 19 3 9
+        , wV 20 5 9
         ]
 
-      -- Điểm spawn xe tăng (4 góc)
-      spawns =
-        [ Vec2 (1.5*cs) (1.5*cs)       -- Góc trái dưới
-        , Vec2 (w - 1.5*cs) (h - 1.5*cs) -- Góc phải trên
-        , Vec2 (w - 1.5*cs) (1.5*cs)   -- Góc phải dưới
-        , Vec2 (1.5*cs) (h - 1.5*cs)   -- Góc trái trên
+      -- Mẫu 2: The Complex Grid Matrix
+      layout2 =
+        [ wH 1 9 1, wH 11 13 1, wH 15 20 1, wH 7 13 2, wH 5 8 3
+        , wH 11 20 3, wH 7 12 4, wH 13 15 5, wH 5 10 6, wH 11 20 6
+        , wH 1 3 8, wH 5 8 8, wH 9 18 8, wH 5 9 9, wH 17 20 9
+        , wH 5 15 10, wV 1 1 5, wV 1 7 10, wV 2 3 5, wV 3 1 10
+        , wV 4 3 10, wV 5 1 4, wV 6 5 8, wV 9 3 9, wV 10 1 3
+        , wV 12 5 9, wV 14 1 5, wV 15 7 10, wV 16 5 7, wV 17 1 3
+        , wV 19 3 10
         ]
 
-      -- Vị trí spawn hộp bí ẩn (giao lộ)
-      boxSpawns =
-        [ Vec2 (4*cs) (4.5*cs)
-        , Vec2 (9*cs) (4.5*cs)
-        , Vec2 (6.5*cs) (2*cs)
-        , Vec2 (6.5*cs) (7*cs)
-        , Vec2 (6.5*cs) (4.5*cs)  -- Trung tâm
+      -- Mẫu 3: The Intertwined Stronghold
+      layout3 =
+        [ wH 7 9 1, wH 15 20 1, wH 1 5 2, wH 13 20 2, wH 5 11 3
+        , wH 15 20 3, wH 9 14 4, wH 17 19 4, wH 9 11 5, wH 17 20 6
+        , wH 9 12 7, wH 13 15 8, wH 17 19 8, wH 5 7 9, wH 17 20 9
+        , wH 1 6 10, wH 7 20 10, wV 1 1 10, wV 2 3 9, wV 3 1 9
+        , wV 4 3 10, wV 5 1 9, wV 6 5 7, wV 7 5 10, wV 8 1 9
+        , wV 10 1 3, wV 10 5 9, wV 12 1 10, wV 13 1 3, wV 13 5 9
+        , wV 14 3 5, wV 15 5 9, wV 16 3 10, wV 17 5 8, wV 20 3 9
         ]
+
+      -- Mẫu 4: Crossfire Maze
+      layout4 =
+        [ wH 3 9 1, wH 13 15 1, wH 1 5 2, wH 11 13 2, wH 1 7 4
+        , wH 17 20 4, wH 11 18 5, wH 1 3 6, wH 5 9 6, wH 9 13 7
+        , wH 15 20 7, wH 1 3 8, wH 9 11 8, wH 13 16 8, wH 9 12 9
+        , wH 13 18 9, wH 1 20 10, wV 1 1 5, wV 1 7 9, wV 3 3 10
+        , wV 4 5 9, wV 5 5 10, wV 7 1 5, wV 7 7 10, wV 8 3 9
+        , wV 9 1 5, wV 10 1 7, wV 11 1 5, wV 12 5 9, wV 13 1 4
+        , wV 14 3 8, wV 15 1 3, wV 16 1 6, wV 17 1 4, wV 17 7 9
+        , wV 18 1 3, wV 18 5 7, wV 19 1 3, wV 20 1 10
+        ]
+
+  layoutIdx <- randomRIO (1 :: Int, 4)
+  let allInnerWalls = case layoutIdx of
+        1 -> layout1
+        2 -> layout2
+        3 -> layout3
+        _ -> layout4
+
+  -- Các điểm spawn thoáng rộng tại chính giữa các hành lang (y = (r + 0.5) * cs)
+  let allSpawns =
+        [ Vec2 (1.5 * cs) (0.5 * cs)
+        , Vec2 (19.5 * cs) (0.5 * cs)
+        , Vec2 (1.5 * cs) (10.5 * cs)
+        , Vec2 (19.5 * cs) (10.5 * cs)
+        , Vec2 (10.5 * cs) (0.5 * cs)
+        , Vec2 (10.5 * cs) (10.5 * cs)
+        , Vec2 (4.5 * cs) (2.5 * cs)
+        , Vec2 (16.5 * cs) (2.5 * cs)
+        , Vec2 (4.5 * cs) (8.5 * cs)
+        , Vec2 (16.5 * cs) (8.5 * cs)
+        , Vec2 (10.5 * cs) (4.5 * cs)
+        , Vec2 (10.5 * cs) (6.5 * cs)
+        ]
+
+  -- Vị trí spawn hộp bí ẩn ở các giao lộ
+  let boxSpawns =
+        [ Vec2 (10.5 * cs) (5.5 * cs)
+        , Vec2 (6.5 * cs) (3.5 * cs)
+        , Vec2 (14.5 * cs) (3.5 * cs)
+        , Vec2 (6.5 * cs) (7.5 * cs)
+        , Vec2 (14.5 * cs) (7.5 * cs)
+        ]
+
+  -- Xáo trộn điểm spawn để mỗi lần sinh là hoàn toàn ngẫu nhiên
+  randomSpawns <- shuffleList allSpawns
 
   return Maze
-    { mazeWalls       = borderWalls ++ innerWalls
+    { mazeWalls       = borderWalls ++ allInnerWalls
     , mazeWidth       = w
     , mazeHeight      = h
-    , mazeSpawnPts    = spawns
+    , mazeSpawnPts    = randomSpawns
     , mazeBoxSpawnPts = boxSpawns
     }

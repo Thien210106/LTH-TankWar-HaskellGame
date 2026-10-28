@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111813">
-  <title>TankWar — Browser Edition</title>
-  <link rel="stylesheet" href="style.css?v=12">
+  <title>TankWar</title>
+  <link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
       <a class="brand" href="#" id="brand-home" aria-label="Về trang chủ">
         <span class="brand-mark"><span></span><span></span><span></span></span>
-        <span>TANK<span class="brand-accent">WAR</span><small>BROWSER EDITION</small></span>
+        <span>TANK<span class="brand-accent">WAR</span><small>
       </a>
       <div class="topbar-right">
         <span id="connection-pill" class="status-pill idle"><i></i><span id="connection-text">SẴN SÀNG KẾT NỐI</span></span>
@@ -57,6 +57,14 @@
         <div class="page-heading map-heading">
           <div><div class="eyebrow"><span class="eyebrow-line"></span> TEST ROOM / MAP SELECT</div><h1>CHỌN CHIẾN TRƯỜNG</h1><p>Chọn map cho phòng thử với bot. Map ngẫu nhiên của trận online vẫn do server quyết định.</p></div>
           <button class="ghost-button" id="map-back" type="button">← THOÁT</button>
+        </div>
+        <div class="match-setup" aria-label="Thiết lập bot">
+          <div class="setup-group"><span class="setup-label">ĐỘ KHÓ BOT</span><div class="setup-options" role="group"><button class="setup-chip" type="button" data-difficulty="easy">EASY</button><button class="setup-chip active" type="button" data-difficulty="medium">MEDIUM</button><button class="setup-chip" type="button" data-difficulty="hard">HARD</button><button class="setup-chip" type="button" data-difficulty="extreme">EXTREME</button></div></div>
+          <div class="setup-group" id="setup-mode-group"><span class="setup-label">CHẾ ĐỘ</span><div class="setup-options" role="group"><button class="setup-chip active" type="button" data-team="0">TỬ CHIẾN</button><button class="setup-chip" type="button" data-team="2">2V2</button><button class="setup-chip" type="button" data-team="3">3V3</button><button class="setup-chip" type="button" data-team="4">4V4</button><button class="setup-chip" type="button" data-team="5">5V5</button></div></div>
+          <div class="setup-group" id="setup-bots-group"><span class="setup-label">SỐ BOT</span><div class="setup-options" role="group"><button class="setup-chip" type="button" data-bots="1">1</button><button class="setup-chip" type="button" data-bots="2">2</button><button class="setup-chip active" type="button" data-bots="3">3</button><button class="setup-chip" type="button" data-bots="4">4</button><button class="setup-chip" type="button" data-bots="5">5</button><button class="setup-chip" type="button" data-bots="6">6</button></div></div>
+          <div class="setup-group" id="setup-time-group"><span class="setup-label" id="setup-time-label">THỜI GIAN TRẬN</span><div class="setup-options" id="setup-time-options" role="group"></div><label class="setup-custom"><input id="setup-time-input" class="setup-input" type="number" inputmode="decimal" step="0.5" min="1" max="30" aria-label="Nhập số phút"><span>PHÚT</span></label></div>
+          <div class="setup-group" id="setup-rounds-group" hidden><span class="setup-label">SỐ VÁN</span><div class="setup-options" id="setup-rounds-options" role="group"></div><label class="setup-custom"><input id="setup-rounds-input" class="setup-input" type="number" inputmode="numeric" step="1" min="1" max="20" aria-label="Nhập số ván"><span id="setup-rounds-need"></span></label></div>
+          <p id="setup-hint" class="setup-hint"></p>
         </div>
         <div class="map-choice-grid" role="list" aria-label="Chọn map luyện tập">
           <button class="map-choice forest" type="button" data-map="forest" role="listitem"><span class="map-choice-number">01</span><span class="map-choice-copy"><img src="assets/maps/forest_name.png" alt="Forest"><small>RỪNG RẬM · TUYẾN HẸP</small></span><span class="map-choice-cta">CHỌN MAP →</span></button>
@@ -147,6 +155,7 @@
         <div class="arena-layout">
           <div class="arena-frame"><div class="arena-corner tl"></div><div class="arena-corner tr"></div><div class="arena-corner bl"></div><div class="arena-corner br"></div><canvas id="game-canvas" width="832" height="576" tabindex="0" aria-label="Màn hình TankWar"></canvas>
             <div id="match-clock" class="match-clock" aria-label="Thời gian trận đấu">00:00</div>
+            <div id="round-score" class="round-score" hidden aria-label="Tỷ số các ván"><span id="round-label" class="round-label">VÁN 1/5</span><strong class="round-wins"><span id="round-wins-me" class="me">0</span><i>:</i><span id="round-wins-enemy" class="enemy">0</span></strong><span id="round-alive" class="round-alive"></span></div>
             <div id="mini-kda" class="mini-kda" aria-label="Chỉ số của bạn">
               <strong class="mini-kda-numbers" title="Hạ gục / Bị hạ"><span id="kda-kills">0</span><i>/</i><span id="kda-deaths">0</span></strong>
               <span id="kda-points" class="mini-kda-points">SCORE: 0</span>
@@ -205,15 +214,14 @@
           <div class="results-stats"><div><strong id="results-kills">0</strong><span>HẠ GỤC</span></div><div><strong id="results-score">0</strong><span>ĐIỂM</span></div><div><strong id="results-map">FOREST</strong><span>CHIẾN TRƯỜNG</span></div></div>
           <div class="results-you-panel"><img src="assets/menu/banthan.png" alt="Khung thành tích của bạn"><span>BẠN · <strong id="results-player-name">TANK PILOT</strong></span></div>
           <div id="results-board" class="results-board"></div>
-          <button id="results-exit" class="primary-button" type="button">THOÁT VỀ TRANG CHỦ</button>
+          <div id="results-lol" class="results-lol" hidden></div>
+          <div class="results-actions"><button id="results-back" class="primary-button" type="button">TRỞ LẠI PHÒNG ĐẤU</button><button id="results-exit" class="primary-button secondary" type="button">THOÁT VỀ TRANG CHỦ</button></div>
         </div>
       </section>
     </main>
     <footer class="site-footer"><span>© TANKWAR · BROWSER CLIENT</span><span>HASKELL / WEBSOCKET / HTML5 CANVAS</span><span id="fps-label">CLIENT READY</span></footer>
   </div>
-  <script src="testgame.js?v=12"></script>
-  <script src="app.js?v=12"></script>
+  <script src="testgame.js?v=15"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>
-
-

@@ -15,10 +15,26 @@ window.TankWarTestGame = Object.freeze({
   tankRenderScale: 0.5,
   collisionRadius: 60,
 
+  // ---- In-match music playlist ---------------------------------------------
+  // Tracks play one after another and loop back to the first (2-3 tracks is fine). Every new match starts on the
+  // next track. A file that is missing is skipped automatically, so you can list a track before adding it.
+  gameMusic: Object.freeze([
+    'assets/audio/musicongamenew.mp3?v=1',
+    'assets/audio/musicongame2.mp3',
+    'assets/audio/musicongame3.mp3'
+  ]),
+
+  // ---- Battle sound loudness (1 = original level, lower = quieter) -----------
+  sfxMix: Object.freeze({ shot: 0.55, move: 0.55, explosion: 0.6 }),
+
   // ---- Engagement range -------------------------------------------------
   // 1 stud = 1 maze cell. Enemies are visible (and bots shoot) up to this many
-  // studs away. It was ~3.2 studs; now 4.5 (allowed range: 4 to 5).
-  rangeStuds: 4.5,
+  // studs away. Reduced again from 3 to 2.5 (narrower field of view).
+  rangeStuds: 2.5,
+
+  // ---- Bullet range -------------------------------------------------------
+  // How far a bullet can fly, as a fraction of the map size (0.5 = half the map). Applies to the offline test.
+  bulletRangeMap: 0.5,
 
   // ---- Respawn / spawn protection / magazine ------------------------------
   playerRespawnSeconds: 5,            // dead time before respawning
@@ -31,14 +47,27 @@ window.TankWarTestGame = Object.freeze({
   killPoints: 10,                     // +10 per tank destroyed
   shutdownBonus: 20,                  // +20 extra for ending an enemy streak
   streakStartKills: 3,                // an enemy counts as "on a streak" from this many kills without dying
-  multiKillWindowSeconds: 10,         // kills inside this window chain: Double, Triple, Quadra, Penta (max)
+  multiKillWindowSeconds: 15,         // max gap between two kills to keep the chain: Double, Triple, Quadra, Penta (set 9999 = chain only breaks when you die)
 
-  // Local test match ends after this many kills by the player.
-  winKills: 20,
+  // The match lasts 5 minutes; the highest score wins.
+  matchSeconds: 300,
+  winKills: Infinity,
+
+  // ---- Team mode (2v2 / 3v3 / 4v4 / 5v5, chosen on the map screen) ---------------
+  // Best-of rounds: every round is a death match with NO respawn until the next round.
+  // A round ends when one team has no tank left (or when the time is up: more survivors win).
+  // The team with the most round wins after all rounds wins the match.
+  teamRounds: 5,
+  teamRoundSeconds: 120,              // time limit of one round
+  teamRoundEndDelaySeconds: 3,        // pause after the last kill of a round; the next round then starts automatically
+
+  // Bot defaults (also selectable on the map screen): 1-6 bots, difficulty easy | medium | hard | extreme.
+  localBotCount: 3,
+  botDifficulty: 'medium',
 
   // This is only the temporary local-bot fallback. Online map randomness is
   // intentionally left to the Haskell server and is not exposed in the UI.
   defaultMapId: 'forest',
-  localBotNames: Object.freeze(['CPU-ALPHA', 'CPU-BRAVO', 'CPU-DELTA']),
+  localBotNames: Object.freeze(['CPU-ALPHA', 'CPU-BRAVO', 'CPU-DELTA', 'CPU-ECHO', 'CPU-FOXTROT', 'CPU-GOLF', 'CPU-HOTEL', 'CPU-INDIA', 'CPU-JULIET']),
   localMapIds: Object.freeze(['forest', 'ruins', 'depot'])
 });

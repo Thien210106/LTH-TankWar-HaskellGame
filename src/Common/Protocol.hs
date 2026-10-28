@@ -90,6 +90,9 @@ data ServerMessage
   | SRoomError !Text
     -- ^ Lỗi tạo/vào phòng (sai pass, phòng đầy, không tồn tại...)
 
+  | SRoomRoster ![(Text, TankColor)]
+    -- ^ Danh sách toàn bộ người chơi trong phòng [(username, color)]
+
   | SPlayerJoined !Text !TankColor
     -- ^ Một người chơi khác vào phòng (username, màu)
 

@@ -31,6 +31,7 @@ library
       LambdaCase
       TupleSections
       BangPatterns
+      TypeApplications
   build-depends:
       aeson >=2.0
     , base >=4.14 && <5
@@ -60,6 +61,7 @@ executable tankwar-server
       LambdaCase
       TupleSections
       BangPatterns
+      TypeApplications
   ghc-options: -threaded -rtsopts -with-rtsopts=-N -O2
   build-depends:
       aeson >=2.0
@@ -78,4 +80,32 @@ executable tankwar-server
     , time >=1.9
     , unordered-containers >=0.2
     , websockets >=0.12
+  default-language: Haskell2010
+
+test-suite tankwar-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_tankwar
+  hs-source-dirs:
+      test
+  default-extensions:
+      OverloadedStrings
+      DeriveGeneric
+      DeriveAnyClass
+      RecordWildCards
+      ScopedTypeVariables
+      LambdaCase
+      TupleSections
+      BangPatterns
+      TypeApplications
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson >=2.0
+    , base >=4.14 && <5
+    , bytestring >=0.10
+    , containers >=0.6
+    , tankwar
+    , text >=1.2
+    , unordered-containers >=0.2
   default-language: Haskell2010
