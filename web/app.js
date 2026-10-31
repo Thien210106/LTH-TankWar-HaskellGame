@@ -1,6 +1,7 @@
 /* TankWar browser client. No frontend build step is required.
  * Online protocol mirrors Common.Protocol.hs (Aeson Generic tagged encoding).
- * The offline practice mode uses the same canvas renderer but a local simulator.
+ * The offline practice mode uses the same canvas renderer but a local simulator
+ * driven by the JSON map layouts in assets/maps.
  */
 (() => {
   'use strict';
@@ -14,23 +15,50 @@
   };
   const $ = (id) => document.getElementById(id);
   const screens = {
-    home: $('home-screen'), lobby: $('lobby-screen'), room: $('room-screen'), game: $('game-screen')
+    home: $('home-screen'), map: $('map-screen'), tankSelect: $('tank-select-screen'), lobby: $('lobby-screen'),
+    room: $('room-screen'), game: $('game-screen'), results: $('results-screen')
   };
   const canvas = $('game-canvas');
   const ctx = canvas.getContext('2d');
-  const input = { up: false, down: false, left: false, right: false, fire: false, mouseX: WORLD_W / 2, mouseY: WORLD_H / 2 };
+  const input = { up: false, down: false, left: false, right: false, fire: false, mouseX: WORLD_W / 2, mouseY: WORLD_H / 2, reloadRequest: false, reloadPulse: false };
   const imageFiles = {
     hull: 'assets/img/tank-hull.png', gun: 'assets/img/tank-gun.png',
-    shotgun: 'assets/img/bullet-shotgun.png', laser: 'assets/img/bullet-laser.png',
-    gatling: 'assets/img/bullet-gatling.png', piercing: 'assets/img/bullet-piercing.png',
-    box: 'assets/img/mystery-box.png', explosion: 'assets/img/explosion.png'
+    box: 'assets/img/mystery-box.png'
   };
   const images = {};
-  const tintedImages = new Map();
   Object.entries(imageFiles).forEach(([name, src]) => {
     const im = new Image();
     im.src = src;
     images[name] = im;
+  });
+  // Hull / gun picked in the garage. Other tanks keep the default sprites.
+  const partImages = {};
+  function partImage(kind, id) {
+    const key = `${kind}_${id}`;
+    if (!partImages[key]) {
+      const im = new Image();
+      im.src = `assets/tanks/${kind}_${String(id).padStart(2, '0')}.png`;
+      partImages[key] = im;
+    }
+    return partImages[key];
+  }
+  function spritesFor(tankId) {
+    if (isMe(String(tankId || ''))) {
+      const hull = partImage('hull', selectedHullId), gun = partImage('gun', selectedGunId);
+      return { hull: hull.complete && hull.naturalWidth ? hull : images.hull, gun: gun.complete && gun.naturalWidth ? gun : images.gun };
+    }
+    return { hull: images.hull, gun: images.gun };
+  }
+  const hudImages = {};
+  Array.from({ length: 10 }, (_, digit) => digit).forEach(digit => {
+    const image = new Image();
+    image.src = `assets/hud/numbers/${digit}.png`;
+    hudImages[`digit-${digit}`] = image;
+  });
+  Array.from({ length: 8 }, (_, index) => index + 1).forEach(frame => {
+    const image = new Image();
+    image.src = `assets/hud/loading/Loading${frame}.png`;
+    hudImages[`loading-${frame}`] = image;
   });
 
   let screenName = 'home';
@@ -50,11 +78,41 @@
   let lastFrameTime = 0;
   let fpsFrameCount = 0;
   let fpsLast = performance.now();
-  let soundEnabled = false;
-  let audioContext = null;
+  let soundEnabled = true;
+  let audioUnlocked = false;
+  let currentMusic = '';
+  let lastCountdownSecond = null;
   let roundOverlayAction = null;
   let localGame = null;
+  let localMap = null;
+  let selectedMapId = 'forest';
+  let selectedTankColor = 'TankRed';
+  let selectedHullId = '05';
+  let selectedGunId = '05';
+  let tankLoadoutConfirmed = false;
+  let tankSelectReturn = 'home';
+  let mapLoadError = '';
   let lastOnlineUiUpdate = 0;
+  let isPaused = false;
+  let musicScale = 1;
+  let matchClockStart = 0;
+  let bannerTimer = 0;
+  let lastHudUpdate = 0;
+  let myDeathAt = 0;
+  let myWasAlive = true;
+  let lastKillerOfMe = '';
+  let tabHeld = false;
+  let lastClockBeep = null, minuteWarnKey = null;
+  let firstBloodDone = false;
+  // Kill announcements (banner + voice) wait in this queue and play one after another.
+  const announceQueue = [];
+  let announceBusy = false, announceGen = 0, announceTimer = 0;
+  const ANNOUNCE_MIN_MS = 1000;   // every announcement stays at least this long, so its banner can be read
+  let killAudioCtx = null;
+  const killTracker = new Map();
+  const streakTracker = new Map();
+  const lastKnownStreak = new Map();
+  const shotVoices = {};
 
   const SoundFX = {
     init() {
@@ -201,6 +259,10 @@
       } catch (_) {}
     }
   };
+  const trainingMaps = new Map();
+  const camera = { x: 0, y: 0 };
+  // Online maze data always comes from the server snapshot (wsMaze); this is only a fallback.
+  const maze = { mazeWidth: WORLD_W, mazeHeight: WORLD_H, mazeWalls: [] };
 
   let maze = generateRandomMaze();
 
@@ -419,12 +481,135 @@
     return { vx: 96, vy: 32 };
   }
 
+  // Win / lose jingle: gamewinner / gameover for free-for-all (and online), gamewinner2 / gameover2 for the team modes
+  // (2v2, 3v3, 4v4, 5v5).
+  function playEndSfx(won, volume = .66, team = false) {
+    playSfx(team ? (won ? 'winner2' : 'gameover2') : (won ? 'winner' : 'gameover'), volume);
+  }
+
+  // ---- Full-screen phase overlays (offline): pre-match countdown and the VICTORY / DEFEAT screen ----
+  let endSplash = null, countdownBox = null, countdownShown = null;
+  function removeCountdownOverlay() { if (countdownBox) { countdownBox.remove(); countdownBox = null; countdownShown = null; } }
+  function updateCountdownOverlay(seconds) {
+    const n = Math.max(1, Math.ceil(seconds));
+    if (!countdownBox) {
+      countdownBox = document.createElement('div');
+      countdownBox.className = 'phase-overlay countdown';
+      countdownBox.innerHTML = '<div class="phase-sub">TRẬN ĐẤU BẮT ĐẦU SAU</div><div class="phase-main"></div>';
+      document.body.appendChild(countdownBox);
+    }
+    if (countdownShown !== n) {
+      countdownShown = n;
+      const main = countdownBox.querySelector('.phase-main');
+      main.textContent = String(n);
+      main.classList.remove('tick'); void main.offsetWidth; main.classList.add('tick');   // restart the pulse every second
+    }
+  }
+  function hideEndSplash() { if (endSplash) { clearTimeout(endSplash.timer); endSplash.box.remove(); endSplash = null; } }
+  // The match is already frozen (gameOver) when this runs; `proceed` opens the results screen once the player clicks / presses a key.
+  function showEndSplash(outcome, proceed) {
+    hideEndSplash();
+    stopBattleMusic();   // battle music stops immediately...
+    if (outcome === 'win') playSfx('endVictory', 1);        // ...and the announcer voice starts together with the splash
+    else if (outcome === 'lose') playSfx('endDefeat', 1);
+    const box = document.createElement('div');
+    box.className = `phase-overlay end ${outcome}`;
+    box.innerHTML = '<div class="phase-main"></div><div class="phase-sub" hidden>Nhấn để tiếp tục</div>';
+    box.querySelector('.phase-main').textContent = outcome === 'win' ? 'VICTORY' : outcome === 'lose' ? 'DEFEAT' : 'DRAW';
+    document.body.appendChild(box);
+    const state = { box, ready: false, proceed, timer: 0 };
+    state.timer = setTimeout(() => { state.ready = true; box.querySelector('.phase-sub').hidden = false; }, 5000);
+    endSplash = state;
+  }
+  ['keydown', 'keyup', 'mousedown', 'mouseup', 'click', 'contextmenu', 'wheel'].forEach(type => {
+    window.addEventListener(type, event => {
+      if (!endSplash) return;
+      event.stopImmediatePropagation(); event.preventDefault();   // nothing reaches the game while the end screen is up
+      if ((type === 'click' || type === 'keydown') && endSplash.ready) { const s = endSplash; hideEndSplash(); s.proceed(); }
+    }, true);
+  });
+
+  function setMovementSound(isMoving) {
+    if (!soundEnabled || !audioUnlocked || !isMoving) {
+      movementTrack.pause();
+      movementTrack.currentTime = 0;
+      return;
+    }
+    movementTrack.play().catch(() => {});
+  }
+
+  function syncMusicForScreen() {
+    const wanted = screenName === 'game' ? (battleMusicStopped ? 'silence' : matchPointActive ? matchPointTrack : countdownActive ? 'countdown' : 'game') : screenName === 'results' ? 'results' : 'menu';
+    Object.entries(musicTracks).forEach(([name, track]) => {
+      if (!soundEnabled || !audioUnlocked || name !== wanted) {
+        track.pause();
+        if (name !== wanted) track.currentTime = 0;
+      }
+    });
+    if (soundEnabled && audioUnlocked && currentMusic !== wanted) {
+      currentMusic = wanted;
+      if (wanted === 'game' && gameTrack._list.length > 1) playGameTrack(gameTrack._i + 1);   // each match starts on the next track
+      else if (musicTracks[wanted]) musicTracks[wanted].play().catch(() => {});
+    } else if (!soundEnabled) {
+      currentMusic = '';
+    }
+  }
+
+  function refreshSoundToggle() {
+    const button = $('sound-toggle');
+    button.style.color = soundEnabled ? 'var(--lime)' : 'var(--muted)';
+    button.textContent = soundEnabled ? '♫' : '♩';
+    button.title = soundEnabled ? 'Tắt âm thanh' : 'Bật âm thanh';
+    button.setAttribute('aria-label', button.title);
+  }
+
+  function toggleSound() {
+    soundEnabled = !soundEnabled;
+    refreshSoundToggle();
+    updatePauseSoundLabel();
+    setMovementSound(false);
+    syncMusicForScreen();
+    if (soundEnabled) playSfx('click', .3);
+  }
+
+  // ---------------------------------------------------------------- screens
+
   function showScreen(name) {
     screenName = name;
     Object.entries(screens).forEach(([key, el]) => { el.hidden = key !== name; });
+    document.body.classList.toggle('in-game', name === 'game');
+    if (name !== 'game') { document.body.classList.remove('mouse-pressed', 'player-dead'); battleMusicStopped = false; }
     if (name === 'game') startRenderLoop();
     else stopRenderLoop();
+    syncMusicForScreen();
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (name === 'game') {
+      hidePauseModal();
+      resizeCanvasBacking();
+      setTimeout(resizeCanvasBacking, 50);
+      setTimeout(resizeCanvasBacking, 180);
+      if (mode === 'online') startInputSender();
+    } else {
+      hidePauseModal();
+      stopInputSender();
+      stopShotSounds();
+      showTabScoreboard(false);
+      resizeCanvasBacking();
+    }
+  }
+
+  // A browser only grants native fullscreen from a user gesture. The local test
+  // flow calls this immediately from its confirmation button; CSS still fills
+  // the available viewport if a browser declines the native request.
+  function enterGameplayFullscreen() {
+    const root = document.documentElement;
+    if (document.fullscreenElement || !root.requestFullscreen) return;
+    root.requestFullscreen().catch(() => {});
+  }
+
+  function leaveGameplayFullscreen() {
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
   }
 
   function statusPill(state, text) {
@@ -438,6 +623,8 @@
     el.textContent = text;
     el.hidden = !text;
   }
+
+  // ---------------------------------------------------------------- protocol helpers
 
   function readField(obj, key) {
     if (!obj || typeof obj !== 'object') return undefined;
@@ -471,6 +658,13 @@
     return Array.isArray(value) && value.length === 1 ? value[0] : value;
   }
 
+  function stringPayload(data) {
+    if (typeof data === 'string') return data;
+    if (Array.isArray(data) && typeof data[0] === 'string') return data[0];
+    if (data && typeof data === 'object') return data.message || data.error || data.contents || '';
+    return '';
+  }
+
   function sendMessage(tag, contents) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     let message;
@@ -487,7 +681,10 @@
     catch (error) { addFeed(`Không gửi được gói tin: ${error.message}`, 'warn'); return false; }
   }
 
+  // ---------------------------------------------------------------- online connection
+
   function connectOnline() {
+    unlockAudio();
     setError('home-error', '');
     const rawName = $('player-name').value.trim();
     const url = $('server-url').value.trim();
@@ -500,7 +697,8 @@
     localStorage.setItem('tankwar-server', url);
     statusPill('connecting', 'ĐANG KẾT NỐI');
     $('online-button').disabled = true;
-    $('online-button').innerHTML = '<span>⌁</span> ĐANG KẾT NỐI…';
+    $('online-button').classList.add('is-loading');
+    $('online-button').setAttribute('aria-label', 'Đang kết nối tới server');
     let socket;
     try { socket = new WebSocket(url); }
     catch (error) { resetConnectButton(); statusPill('idle', 'CHƯA KẾT NỐI SERVER'); setError('home-error', `Không tạo được kết nối WebSocket: ${error.message}`); return; }
@@ -544,7 +742,8 @@
 
   function resetConnectButton() {
     $('online-button').disabled = false;
-    $('online-button').innerHTML = '<span>⌁</span> KẾT NỐI ONLINE <b>↗</b>';
+    $('online-button').classList.remove('is-loading');
+    $('online-button').setAttribute('aria-label', 'Tìm phòng online');
   }
 
   function closeSocket(sendLeave = true) {
@@ -556,7 +755,7 @@
 
   function handleServerMessage(msg) {
     const tag = tagOf(msg);
-    let data = contentsOf(msg);
+    const data = contentsOf(msg);
     switch (tag) {
       case 'SLoginSuccess': {
         loggedIn = true;
@@ -623,6 +822,8 @@
       }
       case 'SCountdown': {
         const seconds = Number(Array.isArray(data) ? data[0] : data);
+        const countdownSecond = Math.max(0, Math.ceil(seconds || 0));
+        lastCountdownSecond = countdownSecond;
         $('countdown-banner').hidden = false;
         $('countdown-banner').textContent = `TRẬN ĐẤU BẮT ĐẦU SAU ${Math.max(0, Math.ceil(seconds || 0))}…`;
         SoundFX.countdown(seconds);
@@ -630,17 +831,14 @@
       }
       case 'SGameSnapshot': {
         latestSnapshot = unwrapOne(data);
+        if (mode === 'online' && screenName !== 'game') resetMatchUi();
+        trackSnapshot(latestSnapshot);
         if (mode === 'online') {
           const phase = tagOf(readField(latestSnapshot, 'wsPhase'));
-          if (phase === 'CountdownPhase') {
-            $('phase-label').textContent = 'CHUẨN BỊ';
-          } else if (phase === 'InGamePhase') {
-            $('phase-label').textContent = 'ĐANG GIAO TRANH';
-          } else if (phase === 'RoundEndPhase') {
-            $('phase-label').textContent = 'KẾT THÚC HIỆP';
-          } else if (phase === 'MatchOverPhase') {
-            $('phase-label').textContent = 'KẾT THÚC TRẬN';
-          }
+          if (phase === 'CountdownPhase') $('phase-label').textContent = 'CHUẨN BỊ';
+          else if (phase === 'InGamePhase') $('phase-label').textContent = 'ĐANG GIAO TRANH';
+          else if (phase === 'RoundEndPhase') $('phase-label').textContent = 'KẾT THÚC HIỆP';
+          else if (phase === 'MatchOverPhase') $('phase-label').textContent = 'KẾT THÚC TRẬN';
           if (screenName !== 'game') showScreen('game');
           const now = performance.now();
           if (now - lastOnlineUiUpdate > 150) {
@@ -688,12 +886,133 @@
     }
   }
 
-  function stringPayload(data) {
-    if (typeof data === 'string') return data;
-    if (Array.isArray(data) && typeof data[0] === 'string') return data[0];
-    if (data && typeof data === 'object') return data.message || data.error || data.contents || '';
-    return '';
+  // ---------------------------------------------------------------- results
+
+  function showPostMatch({ title, summary, kills = 0, score = 0, map = 'FOREST', scores = [], players = null, report = null }) {
+    // The match is over: stop and clear every kill notification (banner, voice queue, kill feed).
+    resetAnnouncements();
+    clearTimeout(bannerTimer);
+    ['kill-banner', 'respawn-banner', 'shield-chip'].forEach(id => { const el = $(id); if (el) el.hidden = true; });
+    const killFeedEl = $('kill-feed'); if (killFeedEl) killFeedEl.innerHTML = '';
+    hideOverlay();
+    leaveGameplayFullscreen();
+    $('results-title').textContent = title;
+    $('results-summary').textContent = summary;
+    $('results-kills').textContent = String(kills);
+    $('results-score').textContent = String(score);
+    $('results-map').textContent = String(map).toUpperCase();
+    $('results-player-name').textContent = username || displayName || 'TANK PILOT';
+    const board = $('results-board');
+    board.innerHTML = '';
+    const entries = Array.isArray(scores) ? scores.slice().sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0)) : [];
+    if (!entries.length) entries.push([username || 'TANK PILOT', score]);
+    entries.slice(0, MAX_TEAM_BOTS + 1).forEach(([name, points], index) => {
+      const row = document.createElement('div'); row.className = 'results-row';
+      const frame = document.createElement('img');
+      frame.className = 'results-row-frame';
+      frame.alt = '';
+      frame.src = index === 0 ? 'assets/menu/hangnhat.png' : 'assets/menu/nguoikhac.png';
+      const rank = document.createElement('span'); rank.textContent = String(index + 1).padStart(2, '0');
+      const player = document.createElement('span'); player.textContent = name || 'TANK PILOT';
+      const value = document.createElement('strong'); value.textContent = `${Number(points || 0)} PTS`;
+      row.append(frame, rank, player, value); board.append(row);
+    });
+    // Offline modes (free-for-all, 2v2, 3v3, 4v4, 5v5) get the detailed LoL / AOV style report.
+    const detailed = Array.isArray(players) && players.length > 0;
+    const lol = $('results-lol');
+    if (lol) { lol.hidden = !detailed; if (detailed) renderMatchReport(lol, players, report || {}); }
+    board.hidden = detailed;
+    const youPanel = document.querySelector('.results-you-panel'); if (youPanel) youPanel.hidden = detailed;
+    const card = document.querySelector('.results-card'); if (card) card.classList.toggle('wide', detailed);
+    showScreen('results');
   }
+
+  // Players for the report: { name, team (-1 = free-for-all), kills, deaths, points, me, color }.
+  function matchPlayers(g) {
+    return g.tanks.map(t => ({ name: t.tankId, team: t.team, kills: t.tankKills, deaths: t.tankDeaths, points: t.tankPoints, me: isMe(t.tankId), color: COLORS[t.tankColor] || '#c7f36b' }));
+  }
+
+  // LoL / AOV style report: per-team panels with result banner, MVP / SVP, K/D and score bars.
+  function renderMatchReport(root, players, info) {
+    root.innerHTML = '';
+    const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+    const team = !!info.team, myTeam = info.myTeam ?? 0;
+    const maxPoints = Math.max(1, ...players.map(p => p.points));
+    const byPoints = list => list.slice().sort((a, b) => b.points - a.points || b.kills - a.kills || a.deaths - b.deaths);
+    const outcome = info.outcome || 'draw';
+    const groups = team
+      ? [myTeam, 1 - myTeam].map(id => ({ id, list: byPoints(players.filter(p => p.team === id)), mine: id === myTeam }))
+      : [{ id: -1, list: byPoints(players), mine: true }];
+    // MVP: the best score of EACH team in team modes (the losing side keeps an MVP too, no SVP), or of everybody in free-for-all.
+    const mvps = new Set(team ? groups.map(gr => gr.list[0]) : [byPoints(players)[0]]);
+    if (team && (info.history || []).length) {
+      const pips = el('div', 'rl-rounds'); pips.append(el('span', 'rl-rounds-label', 'CÁC VÁN'));
+      info.history.forEach(w => pips.append(el('span', `rl-pip ${w < 0 ? 'draw' : w === myTeam ? 'win' : 'lose'}`)));
+      root.append(pips);
+    }
+    const wrap = el('div', `rl-teams${team ? '' : ' ffa'}`);
+    groups.forEach(gr => {
+      const cls = !team ? 'ffa' : (gr.mine ? 'blue' : 'red');
+      const box = el('section', `rl-team ${cls}`);
+      const head = el('div', 'rl-head');
+      const name = el('div', 'rl-team-name', !team ? 'XẾP HẠNG TỬ CHIẾN' : (gr.mine ? 'ĐỘI BẠN' : 'ĐỘI ĐỊCH'));
+      if (team) name.append(el('small', '', `${info.wins ? info.wins[gr.id] : 0} VÁN THẮNG`));
+      else { const rank = byPoints(players).findIndex(p => p.me) + 1; name.append(el('small', '', `BẠN HẠNG ${rank}/${players.length}`)); }
+      head.append(name);
+      if (team) {
+        const res = outcome === 'draw' ? 'draw' : (gr.mine === (outcome === 'win') ? 'win' : 'lose');
+        head.append(el('div', `rl-result ${res}`, res === 'win' ? 'CHIẾN THẮNG' : res === 'lose' ? 'THẤT BẠI' : 'HÒA'));
+      }
+      box.append(head);
+      const cols = el('div', 'rl-cols'); ['', 'NGƯỜI CHƠI', 'K / D', 'ĐIỂM'].forEach(t => cols.append(el('span', '', t)));
+      box.append(cols);
+      gr.list.forEach((p, i) => {
+        const row = el('div', `rl-row${p.me ? ' me' : ''}${i === 0 ? ' first' : ''}`);
+        const player = el('div', 'rl-player');
+        const nm = el('div', 'rl-name'); const dot = el('span', 'rl-dot'); dot.style.background = p.color;
+        nm.append(dot, el('span', '', p.name + (p.me ? ' (BẠN)' : '')));
+        if (mvps.has(p)) nm.append(el('span', 'rl-badge', 'MVP'));
+        const bar = el('span', 'rl-bar'); const fill = document.createElement('i'); fill.style.width = `${Math.max(3, Math.round(p.points / maxPoints * 100))}%`; bar.append(fill);
+        player.append(nm, bar);
+        const kd = el('div', 'rl-kd', `${p.kills} / ${p.deaths}`); kd.append(el('small', '', `KDA ${(p.kills / Math.max(1, p.deaths)).toFixed(1)}`));
+        row.append(el('span', 'rl-rank', String(i + 1)), player, kd, el('div', 'rl-score', String(p.points)));
+        box.append(row);
+      });
+      wrap.append(box);
+    });
+    root.append(wrap);
+  }
+
+  function exitResultsToHome() {
+    setMovementSound(false);
+    leaveGameplayFullscreen();
+    localGame = null;
+    localMap = null;
+    if (mode === 'online') closeSocket();
+    mode = 'none';
+    showScreen('home');
+  }
+
+  // From the results screen straight back to where the next match is set up (no trip via the home page):
+  // bot mode -> map / difficulty / mode screen, online -> room lobby (leaves the finished room, stays connected).
+  function backToBattleRoom() {
+    setMovementSound(false);
+    leaveGameplayFullscreen();
+    const wasOnline = mode === 'online';
+    localGame = null;
+    localMap = null;
+    if (wasOnline && ws && ws.readyState === WebSocket.OPEN && loggedIn) {
+      mode = 'none';
+      stopInputSender();
+      if (activeRoom) { sendMessage('CLeaveRoom'); showScreen('lobby'); }   // SRoomLeft refreshes the room list
+      else { showScreen('lobby'); sendMessage('CListRooms'); }
+      return;
+    }
+    if (wasOnline) { exitResultsToHome(); return; }
+    openMapSelect();
+  }
+
+  // ---------------------------------------------------------------- room / tank select
 
   function onRoomReady() {
     setError('lobby-error', '');
@@ -704,8 +1023,72 @@
     $('countdown-banner').hidden = true;
     setError('room-error', '');
     renderRoomPlayers();
-    showScreen('room');
+    // The player already picked a loadout before connecting. Keep the server
+    // room flow intact and do not make them choose the same parts twice.
+    if (tankLoadoutConfirmed) showScreen('room');
+    else openTankSelect('room');
     addFeed(isHost ? 'Đã tạo phòng mới.' : 'Đã tham gia phòng.');
+  }
+
+  function refreshTankAssembly() {
+    const hull = String(selectedHullId).padStart(2, '0');
+    const gun = String(selectedGunId).padStart(2, '0');
+    $('tank-preview-hull').src = `assets/tanks/hull_${hull}.png`;
+    $('tank-preview-gun').src = `assets/tanks/gun_${gun}.png`;
+    $('selected-hull-label').textContent = `THÂN ${hull}`;
+    $('selected-gun-label').textContent = `NÒNG ${gun}`;
+    document.querySelectorAll('[data-hull]').forEach(button => {
+      const active = button.dataset.hull === hull;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    document.querySelectorAll('[data-gun]').forEach(button => {
+      const active = button.dataset.gun === gun;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
+
+  function openTankSelect(returnTo) {
+    tankSelectReturn = returnTo;
+    const savedName = $('player-name').value.trim() || username || displayName || localStorage.getItem('tankwar-name') || '';
+    $('tank-name').value = savedName;
+    const roomId = activeRoom && readField(activeRoom, 'riRoomId');
+    $('garage-room-code').textContent = returnTo === 'offline' ? 'BOT-TEST' : roomId || 'CONNECT';
+    $('tank-select-note').textContent = returnTo === 'offline'
+      ? 'Sau khi xác nhận xe, chọn độ khó bot, số bot và map thử. Map online vẫn do server ngẫu nhiên.'
+      : roomId
+        ? 'Mã phòng đã được cấp. Map và trạng thái trận online vẫn do server quyết định.'
+        : 'Sau khi xác nhận, bạn sẽ kết nối để tìm hoặc tạo phòng. Map online do server chọn ngẫu nhiên.';
+    refreshTankAssembly();
+    showScreen('tankSelect');
+  }
+
+  function closeTankSelect() {
+    if (tankSelectReturn === 'room') showScreen('lobby');
+    else showScreen('home');
+  }
+
+  function confirmTankSelection() {
+    unlockAudio();
+    const name = $('tank-name').value.trim() || $('player-name').value.trim() || 'TankPilot';
+    username = name;
+    displayName = name;
+    $('player-name').value = name;
+    localStorage.setItem('tankwar-name', name);
+    tankLoadoutConfirmed = true;
+    if (tankSelectReturn === 'offline') {
+      openMapSelect();   // bot difficulty (EASY ... EXTREME), bot count and map are chosen here
+      return;
+    }
+    if (tankSelectReturn === 'connect') {
+      // connectOnline keeps the existing WebSocket protocol and reads the
+      // name from the (hidden) home field which was just updated above.
+      showScreen('home');
+      connectOnline();
+      return;
+    }
+    showScreen('room');
   }
 
   function renderRoomList() {
@@ -728,11 +1111,11 @@
       const p = document.createElement('p'); p.textContent = `MÃ ${id} · ${phaseLabel(phase)}`;
       const tags = document.createElement('div'); tags.className = 'room-tags';
       tags.innerHTML = `<span class="tag">${current} / ${max} NGƯỜI</span><span class="tag ${privateRoom ? 'private' : ''}">${privateRoom ? '⌑ RIÊNG TƯ' : '◎ CÔNG KHAI'}</span>`;
-      info.append(h3,p,tags);
+      info.append(h3, p, tags);
       const button = document.createElement('button'); button.className = 'join-room-button'; button.type = 'button'; button.textContent = 'THAM GIA →';
       button.disabled = phase !== 'LobbyPhase' || current >= max;
       button.addEventListener('click', () => { $('join-id').value = id; joinRoom(); });
-      card.append(info,button); root.append(card);
+      card.append(info, button); root.append(card);
     });
   }
 
@@ -748,14 +1131,14 @@
     $('players-counter').textContent = `${currentCount} / ${max}`;
     const root = $('room-players'); root.innerHTML = '';
     const list = [...roomPlayerNames];
-    while (list.length < Math.max(1, Math.min(current, max))) list.push({ name: `CHIẾN BINH ${String(list.length + 1).padStart(2,'0')}`, color: ['TankBlue','TankGreen','TankYellow'][list.length % 3], waiting: true });
-    list.forEach((player,index) => {
+    while (list.length < Math.max(1, Math.min(current, max))) list.push({ name: `CHIẾN BINH ${String(list.length + 1).padStart(2, '0')}`, color: ['TankBlue', 'TankGreen', 'TankYellow'][list.length % 3], waiting: true });
+    list.forEach(player => {
       const row = document.createElement('div'); row.className = 'player-row';
-      const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.style.color = COLORS[player.color] || '#c7f36b'; avatar.textContent = (player.name || '?').slice(0,1).toUpperCase();
+      const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.style.color = COLORS[player.color] || '#c7f36b'; avatar.textContent = (player.name || '?').slice(0, 1).toUpperCase();
       const titleWrap = document.createElement('div');
       const title = document.createElement('div'); title.className = 'player-name'; title.textContent = player.name;
       const sub = document.createElement('div'); sub.className = 'player-sub'; sub.textContent = player.waiting ? 'ĐÃ KẾT NỐI · ĐANG ĐỒNG BỘ' : player.self ? 'BẠN · ĐÃ KẾT NỐI' : 'ĐÃ KẾT NỐI';
-      titleWrap.append(title,sub); row.append(avatar,titleWrap);
+      titleWrap.append(title, sub); row.append(avatar, titleWrap);
       if (player.host || (isHost && player.self)) { const host = document.createElement('span'); host.className = 'host-label'; host.textContent = 'CHỦ PHÒNG'; row.append(host); }
       root.append(row);
     });
@@ -764,6 +1147,7 @@
   }
 
   function createRoom() {
+    unlockAudio();
     setError('lobby-error', '');
     const roomName = $('room-name').value.trim() || `${displayName || username}’s Arena`;
     const max = Number($('max-players').value || 4);
@@ -773,6 +1157,7 @@
   }
 
   function joinRoom() {
+    unlockAudio();
     setError('lobby-error', '');
     const id = $('join-id').value.trim().toUpperCase();
     const password = $('join-password').value;
@@ -781,10 +1166,24 @@
     sendMessage('CJoinRoom', { cjrRoomId: id, cjrPassword: password ? password : null });
   }
 
-  function renderRoomPlayersOnlineFallback() {
-    if (!activeRoom) return;
-    roomPlayerNames = [{ name: username || displayName || 'Bạn', color: isHost ? 'TankRed' : 'TankBlue', self: true, host: isHost }];
-    renderRoomPlayers();
+  // ---------------------------------------------------------------- offline practice
+
+  function openMapSelect() {
+    unlockAudio();
+    closeSocket(false);
+    mode = 'none';
+    setError('map-error', '');
+    showScreen('map');
+    mapLoadPromise.then(() => {
+      if (mapLoadError) setError('map-error', `Không tải được map luyện tập: ${mapLoadError}. Hãy chạy frontend qua http://localhost như hướng dẫn trong web/README.md.`);
+    });
+  }
+
+  // Practice flow: pick a tank -> pick bot difficulty / bot count / map -> match starts.
+  function chooseOfflineMap(mapId) {
+    unlockAudio();
+    selectedMapId = mapId;
+    startOffline(mapId);
   }
 
   function startOffline() {
@@ -797,12 +1196,16 @@
     localStorage.setItem('tankwar-name', username);
     closeSocket(false);
     mode = 'offline'; activeRoom = null; isHost = false;
-    localGame = createLocalGame(username);
+    selectedMapId = mapId;
+    localMap = chosenMap;
+    localGame = createLocalGame(username || 'TankPilot');
     latestSnapshot = localSnapshot();
-    $('match-mode').textContent = 'OFFLINE PRACTICE';
-    $('match-room').textContent = 'TRAINING';
-    $('phase-label').textContent = 'ĐANG THỰC HÀNH';
-    $('match-player-count').textContent = '4';
+    resetMatchUi();
+    const teamLabel = localGame.team ? `${localGame.teamSize}V${localGame.teamSize} · ` : '';
+    $('match-mode').textContent = `OFFLINE · ${teamLabel}${BOT_LEVELS[botSettings.difficulty].label}`;
+    $('match-room').textContent = chosenMap.label;
+    $('phase-label').textContent = localGame.team ? `TỬ CHIẾN ĐỒNG ĐỘI · ${localGame.rounds} VÁN` : 'ĐANG THỰC HÀNH';
+    $('match-player-count').textContent = String(localGame.tanks.length);
     setError('home-error', '');
     statusPill('idle', 'CHẾ ĐỘ OFFLINE');
     updateMatchHeader(latestSnapshot); updateScoreboard(latestSnapshot); updateWeaponPanel(latestSnapshot);
@@ -831,31 +1234,411 @@
   function localSnapshot() {
     if (!localGame) return null;
     return {
-      wsTanks: localGame.tanks.map(t => ({ tankId:t.tankId,tankPos:t.tankPos,tankVel:t.tankVel,tankBodyAngle:t.tankBodyAngle,tankTurretAngle:t.tankTurretAngle,tankColor:t.tankColor,tankWeapon:t.tankWeapon,tankAlive:t.tankAlive,tankScore:t.tankScore,tankKills:t.tankKills })),
-      wsBullets: localGame.bullets.map(b => ({ bulPos:b.pos,bulVel:b.vel,bulType:b.type,bulOwnerId:b.owner,bulBounces:b.bounces,bulLifetime:b.life })),
+      wsTanks: localGame.tanks.map(publicTank),
+      wsBullets: localGame.bullets.map(b => ({ bulPos: b.pos, bulVel: b.vel, bulType: b.type, bulOwnerId: b.owner, bulBounces: b.bounces, bulLifetime: b.life })),
       wsLasers: localGame.lasers,
-      wsMysteryBoxes: localGame.boxes.map(b => ({ mbPos:b.pos,mbActive:true,mbRespawnIn:0 })),
+      wsMysteryBoxes: localGame.boxes.map(b => ({ mbPos: b.pos, mbActive: true, mbRespawnIn: 0 })),
       wsMaze: maze,
-      wsPhase: localGame.gameOver ? { tag:'MatchOverPhase', contents:localGame.name } : { tag:'InGamePhase' },
-      wsScores: localGame.tanks.map(t => [t.tankId,t.tankScore])
+      wsPhase: localGame.gameOver ? { tag: 'MatchOverPhase', contents: localGame.name } : { tag: 'InGamePhase' },
+      wsScores: localGame.tanks.map(t => [t.tankId, t.tankPoints])
     };
+  }
+
+  function localSpawnPoints(count) {
+    const points = getLocalSpawns(localMap);
+    while (points.length < count) {
+      let chosen = null;
+      for (let attempt = 0; attempt < 120 && !chosen; attempt++) {
+        const candidate = pickOpenLocalPoint(LOCAL_TANK_RADIUS + 10);
+        if (points.every(other => distance(other, candidate) > 1400)) chosen = candidate;
+      }
+      points.push(chosen || pickOpenLocalPoint(LOCAL_TANK_RADIUS + 10));
+    }
+    return points;
+  }
+
+  // ---- bot navigation: a 64 px walkability grid per map, solved with breadth-first search ----
+  const NAV_STEP = 64;
+
+  function navGrid() {
+    if (localMap._nav) return localMap._nav;
+    const cols = Math.ceil(localMap.width / NAV_STEP), rows = Math.ceil(localMap.height / NAV_STEP);
+    const open = new Uint8Array(cols * rows);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        open[r * cols + c] = collidesLocalMap({ vx: (c + .5) * NAV_STEP, vy: (r + .5) * NAV_STEP }, LOCAL_TANK_RADIUS + 6) ? 0 : 1;
+      }
+    }
+    localMap._nav = { cols, rows, open };
+    return localMap._nav;
+  }
+
+  function nearestOpenCell(nav, index) {
+    if (nav.open[index]) return index;
+    const cx = index % nav.cols, cy = (index / nav.cols) | 0;
+    for (let radius = 1; radius <= 6; radius++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+          const x = cx + dx, y = cy + dy;
+          if (x >= 0 && y >= 0 && x < nav.cols && y < nav.rows && nav.open[y * nav.cols + x]) return y * nav.cols + x;
+        }
+      }
+    }
+    return -1;
+  }
+
+  function navPath(from, to) {
+    const nav = navGrid(), { cols, rows, open } = nav;
+    const toIndex = p => clamp(Math.floor(p.vy / NAV_STEP), 0, rows - 1) * cols + clamp(Math.floor(p.vx / NAV_STEP), 0, cols - 1);
+    const start = toIndex(from), goal = nearestOpenCell(nav, toIndex(to));
+    if (goal < 0) return [];
+    const prev = new Int32Array(cols * rows).fill(-1), queue = new Int32Array(cols * rows);
+    let head = 0, tail = 0;
+    queue[tail++] = start; prev[start] = start;
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+    while (head < tail) {
+      const cur = queue[head++];
+      if (cur === goal) break;
+      const cx = cur % cols, cy = (cur / cols) | 0;
+      for (const [dx, dy] of dirs) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const next = ny * cols + nx;
+        if (prev[next] !== -1 || !open[next]) continue;
+        if (dx && dy && (!open[cy * cols + nx] || !open[ny * cols + cx])) continue;
+        prev[next] = cur; queue[tail++] = next;
+      }
+    }
+    if (prev[goal] === -1) return [];
+    const path = [];
+    for (let cur = goal; cur !== start; cur = prev[cur]) path.push({ vx: ((cur % cols) + .5) * NAV_STEP, vy: (((cur / cols) | 0) + .5) * NAV_STEP });
+    return path.reverse();
+  }
+
+  function lineClear(a, b, radius) {
+    const steps = Math.max(1, Math.ceil(distance(a, b) / 40));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      if (collidesLocalMap({ vx: a.vx + (b.vx - a.vx) * t, vy: a.vy + (b.vy - a.vy) * t }, radius)) return false;
+    }
+    return true;
+  }
+
+  // Skip ahead along the path to the farthest waypoint that can be reached in a straight line.
+  function pickWaypoint(bot) {
+    const path = bot._path;
+    while (path.length > 1 && distance(bot.tankPos, path[0]) < NAV_STEP * .8) path.shift();
+    for (let i = Math.min(path.length - 1, 7); i > 0; i--) {
+      if (lineClear(bot.tankPos, path[i], LOCAL_TANK_RADIUS)) return path[i];
+    }
+    return path[0] || null;
+  }
+
+  function turnToward(current, wanted, maxStep) {
+    const diff = Math.atan2(Math.sin(wanted - current), Math.cos(wanted - current));
+    return current + clamp(diff, -maxStep, maxStep);
+  }
+
+  function angleGap(a, b) { return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))); }
+
+  function botHeading(bot, dest, lvl) {
+    let point = dest;
+    if (lvl.path && bot._wp) {
+      point = bot._wp;
+      if (distance(bot.tankPos, point) < 50) bot._think = 0;
+    } else if (!lvl.path && bot._dirTimer > 0) {
+      return { x: Math.cos(bot._direction), y: Math.sin(bot._direction) };
+    }
+    const dx = point.vx - bot.tankPos.vx, dy = point.vy - bot.tankPos.vy, len = Math.hypot(dx, dy) || 1;
+    return { x: dx / len, y: dy / len };
+  }
+
+  // One bot, one frame: pick a target, plan a route, dodge, move, aim (with lead) and shoot.
+  function updateLocalBot(bot, dt) {
+    const g = localGame, lvl = BOT_LEVELS[g.difficulty] || BOT_LEVELS.medium, player = g.tanks[0];
+    bot._cooldown -= dt; bot._think -= dt; bot._strafeT -= dt; bot._dodgeT -= dt; bot._dodgeCheck -= dt; bot._dirTimer -= dt; bot._pathAge += dt;
+    const range = visionRadius() * lvl.range;
+
+    // 1. Perception: a bot only reacts to an enemy it has actually spotted (inside its vision range and, on the
+    // smarter levels, with a clear line of sight). It no longer knows where everybody is, so it stops rushing the centre.
+    let target = null, best = Infinity;
+    if (bot._targetId) {
+      const known = g.tanks.find(t => t.tankId === bot._targetId && t.tankAlive);
+      if (known) { target = known; best = distance(bot.tankPos, known.tankPos); } else bot._targetId = null;
+    }
+
+    // 2. Re-plan a few times per second.
+    if (bot._think <= 0) {
+      bot._think = lvl.think * (.8 + Math.random() * .4);
+      let cand = null, candDist = Infinity, bestWeighted = Infinity;
+      g.tanks.filter(t => t !== bot && t.tankAlive && (!g.team || t.team !== bot.team)).forEach(t => {
+        const d = distance(bot.tankPos, t.tankPos);
+        // Only enemies that are really spotted count (in range, clear line of sight on smarter levels), so an enemy
+        // hidden behind a wall no longer hides the others.
+        if (d > range || (lvl.los && !lineClear(bot.tankPos, t.tankPos, 12))) return;
+        // The human is only slightly preferred: their distance counts as 15% shorter.
+        const weighted = t === player ? d * .85 : d;
+        if (weighted < bestWeighted) { bestWeighted = weighted; candDist = d; cand = t; }
+      });
+      bot._sees = !!cand;
+      if (bot._sees) {
+        target = cand; best = candDist; bot._targetId = cand.tankId;
+        bot._lastSeen = { pos: { ...cand.tankPos }, t: g.time };
+        if (g.team && lvl.path) g.teamSeen[bot.team] = { pos: { ...cand.tankPos }, t: g.time };   // teammates get the callout
+      } else { target = null; best = Infinity; bot._targetId = null; }
+      bot._dest = botDestination(bot, lvl, target);
+      if (lvl.path && bot._dest) {
+        bot._path = navPath(bot.tankPos, bot._dest);
+        bot._wp = pickWaypoint(bot);
+        if (!bot._path.length && !bot._sees) { bot._roam = null; bot._roamUntil = 0; }   // unreachable / already there: pick another patrol point
+      }
+    }
+
+    // Re-validate the sighting every few frames so a bot never keeps shooting at a target that went out of range
+    // or behind a wall since the last re-plan.
+    bot._losCheck = (bot._losCheck || 0) - dt;
+    if (target && bot._sees && bot._losCheck <= 0) {
+      bot._losCheck = .07;
+      best = distance(bot.tankPos, target.tankPos);
+      if (best > range * 1.1 || (lvl.los && !lineClear(bot.tankPos, target.tankPos, 12))) { bot._sees = false; bot._think = Math.min(bot._think, .05); }
+    }
+
+    // 3. Dodge: look for a bullet whose path passes through this tank within the next ~0.9 s.
+    if (lvl.dodge > 0 && bot._dodgeCheck <= 0 && bot._dodgeT <= 0) {
+      bot._dodgeCheck = .08;
+      for (const b of g.bullets) {
+        if (b.owner === bot.tankId || b.life <= 0) continue;
+        if (g.team && (g.tanks.find(t => t.tankId === b.owner) || {}).team === bot.team) continue;   // ally bullets are harmless
+        const rx = bot.tankPos.vx - b.pos.vx, ry = bot.tankPos.vy - b.pos.vy;
+        const speed2 = b.vel.vx * b.vel.vx + b.vel.vy * b.vel.vy;
+        const t = (rx * b.vel.vx + ry * b.vel.vy) / speed2;
+        if (t <= 0 || t > .9) continue;
+        const cx = b.pos.vx + b.vel.vx * t - bot.tankPos.vx, cy = b.pos.vy + b.vel.vy * t - bot.tankPos.vy;
+        if (Math.hypot(cx, cy) > LOCAL_TANK_RADIUS + 20 || Math.random() > lvl.dodge) continue;
+        const speed = Math.sqrt(speed2);
+        let px = -b.vel.vy / speed, py = b.vel.vx / speed;
+        if (px * cx + py * cy > 0) { px = -px; py = -py; }   // sidestep away from the point of impact
+        bot._dodge = { x: px, y: py }; bot._dodgeT = .35;
+        break;
+      }
+    }
+
+    // 4. Movement.
+    let dir = null;
+    bot._escapeT = (bot._escapeT || 0) - dt;
+    if (bot._escapeT > 0) dir = { x: Math.cos(bot._direction), y: Math.sin(bot._direction) };
+    else if (bot._dodgeT > 0 && bot._dodge) dir = bot._dodge;
+    else if (target && lvl.strafe && bot._sees) {
+      const preferred = range * .55, ux = (target.tankPos.vx - bot.tankPos.vx) / (best || 1), uy = (target.tankPos.vy - bot.tankPos.vy) / (best || 1);
+      if (best > preferred * 1.2) dir = botHeading(bot, target.tankPos, lvl);
+      else if (best < preferred * .6) dir = { x: -ux, y: -uy };
+      else {
+        if (bot._strafeT <= 0) { bot._strafe *= -1; bot._strafeT = .7 + Math.random() * 1.1; }
+        dir = { x: -uy * bot._strafe, y: ux * bot._strafe };
+      }
+    } else {
+      const dest = target ? target.tankPos : bot._dest;
+      dir = dest ? botHeading(bot, dest, lvl) : null;
+    }
+    if (bot._escapeT > 0) dir = { x: Math.cos(bot._direction), y: Math.sin(bot._direction) };
+    // Team mode: teammates spread out instead of walking in a single clump.
+    if (dir && g.team && bot._dodgeT <= 0 && !(target && lvl.strafe && bot._sees)) {
+      let rx = 0, ry = 0;
+      g.tanks.forEach(m => {
+        if (m === bot || !m.tankAlive || m.team !== bot.team) return;
+        const d = distance(bot.tankPos, m.tankPos);
+        if (d > 1 && d < 450) { const w = 1 - d / 450; rx += (bot.tankPos.vx - m.tankPos.vx) / d * w; ry += (bot.tankPos.vy - m.tankPos.vy) / d * w; }
+      });
+      if (rx || ry) { const nx = dir.x + rx * 1.2, ny = dir.y + ry * 1.2, l = Math.hypot(nx, ny) || 1; dir = { x: nx / l, y: ny / l }; }
+    }
+    if (dir) {
+      const step = lvl.speed * LOCAL_SPEED_SCALE * dt, before = { ...bot.tankPos };
+      moveLocalTank(bot, dir.x * step, dir.y * step);
+      bot.tankBodyAngle = Math.atan2(dir.y, dir.x);
+      // Anti-stuck: if the bot has barely moved for ~0.7 s, drop the route and back out in a random direction.
+      if (distance(before, bot.tankPos) < step * .25) bot._stuckT = (bot._stuckT || 0) + dt; else bot._stuckT = Math.max(0, (bot._stuckT || 0) - dt * 2);
+      if (bot._stuckT > .7) {
+        bot._stuckT = 0; bot._escapeT = .6 + Math.random() * .5; bot._direction = Math.random() * Math.PI * 2;
+        bot._path = []; bot._wp = null; bot._roam = null; bot._roamUntil = 0; bot._think = 0;
+      }
+      if (distance(before, bot.tankPos) < step * .25) {   // blocked
+        bot._dodgeT = 0;
+        if (lvl.strafe && bot._strafeT < .3) { bot._strafe *= -1; bot._strafeT = .5; }
+        if (!lvl.path) { bot._direction = Math.random() * Math.PI * 2; bot._dirTimer = .8 + Math.random() * 1.5; }
+        else bot._think = Math.min(bot._think, .05);
+      }
+    }
+
+    // 5. Aim and fire.
+    const maxTurn = lvl.turn * dt;
+    if (!target) { bot.tankTurretAngle = turnToward(bot.tankTurretAngle, bot.tankBodyAngle, maxTurn); bot._seen = 0; return; }
+    let ax = target.tankPos.vx, ay = target.tankPos.vy;
+    if (lvl.lead > 0) {
+      const flight = Math.min(best / (400 * LOCAL_SPEED_SCALE), 1.5);
+      const vmax = 320 * LOCAL_SPEED_SCALE, vl = Math.hypot(target._v.vx, target._v.vy) || 1, vk = Math.min(1, vmax / vl);   // never lead on a teleport spike
+      ax += target._v.vx * vk * flight * lvl.lead; ay += target._v.vy * vk * flight * lvl.lead;
+      ax = clamp(ax, 0, localMap.width); ay = clamp(ay, 0, localMap.height);
+    }
+    const wanted = Math.atan2(ay - bot.tankPos.vy, ax - bot.tankPos.vx);
+    bot.tankTurretAngle = turnToward(bot.tankTurretAngle, wanted, maxTurn);
+    bot._seen = bot._sees ? bot._seen + dt : 0;
+    const holdFire = target.tankInvulnerabilityLeft > .25;
+    if (bot._sees && !holdFire && bot._cooldown <= 0 && bot._seen >= lvl.react && angleGap(bot.tankTurretAngle, wanted) < .12 + lvl.aim * .3) {
+      localShoot(bot, bot.tankTurretAngle + (Math.random() - .5) * 2 * lvl.aim, 'NormalBullet');
+      bot._cooldown = lvl.fire[0] + Math.random() * (lvl.fire[1] - lvl.fire[0]);
+    }
+  }
+
+  // Where a bot wants to go when nothing is in sight: chase the last place it saw an enemy, answer a teammate's
+  // callout, otherwise patrol to a varied point on the map.
+  function botDestination(bot, lvl, target) {
+    const g = localGame;
+    if (target) return target.tankPos;
+    const seen = bot._lastSeen;
+    if (seen && g.time - seen.t < (lvl.hunt ? 9 : 5) && distance(bot.tankPos, seen.pos) > 240) return seen.pos;
+    if (g.team && lvl.path) {
+      const call = g.teamSeen[bot.team];
+      if (call && g.time - call.t < 6 && distance(bot.tankPos, call.pos) > 500) return openPointNear(call.pos);
+    }
+    if (!bot._roam || distance(bot.tankPos, bot._roam) < 240 || g.time > bot._roamUntil) {
+      bot._roam = pickPatrolPoint(bot, lvl);
+      bot._roamUntil = g.time + 12 + Math.random() * 10;
+    }
+    return bot._roam;
+  }
+
+  function pickPatrolPoint(bot, lvl) {
+    const g = localGame, W = localMap.width, H = localMap.height, margin = 260;
+    if (g.team) {
+      // Push along a lane between the two bases; every teammate takes its own lane and some flank wide.
+      const mates = g.tanks.filter(t => t.team === bot.team), foes = g.tanks.filter(t => t.team !== bot.team);
+      const own = mates[0]._spawn, foe = foes[0]._spawn;
+      const dx = foe.vx - own.vx, dy = foe.vy - own.vy, len = Math.hypot(dx, dy) || 1;
+      const px = -dy / len, py = dx / len;
+      const lane = (mates.indexOf(bot) - (mates.length - 1) / 2) * 1000 * (Math.random() < .25 ? 2.2 : 1);
+      const aliveFoes = foes.filter(f => f.tankAlive);
+      if (aliveFoes.length && aliveFoes.length <= 2 && Math.random() < .6) {   // endgame: close in on the area of the last enemies
+        const f = aliveFoes[Math.floor(Math.random() * aliveFoes.length)];
+        return openPointNear({ vx: f.tankPos.vx + (Math.random() - .5) * 1600, vy: f.tankPos.vy + (Math.random() - .5) * 1600 });
+      }
+      const t = .3 + Math.random() * .65, jitter = () => (Math.random() - .5) * 500;
+      return openPointNear({ vx: own.vx + dx * t + px * lane + jitter(), vy: own.vy + dy * t + py * lane + jitter() });
+    }
+    // Free-for-all: hunting bots sometimes head for the rough area of an enemy, others visit a different zone.
+    if (lvl.hunt && Math.random() < .35) {
+      const foes = g.tanks.filter(t => t !== bot && t.tankAlive);
+      if (foes.length) {
+        const f = foes[Math.floor(Math.random() * foes.length)];
+        return openPointNear({ vx: f.tankPos.vx + (Math.random() - .5) * 2000, vy: f.tankPos.vy + (Math.random() - .5) * 2000 });
+      }
+    }
+    const zones = [];
+    for (let zy = 0; zy < 3; zy++) for (let zx = 0; zx < 3; zx++) {
+      const idx = zy * 3 + zx;
+      if (idx === bot._zone) continue;
+      zones.push({ idx, zx, zy, w: zx === 1 && zy === 1 ? .35 : (zx !== 1 && zy !== 1 ? 1.3 : 1) });   // the centre is the least attractive
+    }
+    let roll = Math.random() * zones.reduce((sum, z) => sum + z.w, 0), zone = zones[0];
+    for (const z of zones) { roll -= z.w; if (roll <= 0) { zone = z; break; } }
+    bot._zone = zone.idx;
+    return openPointNear({ vx: margin + (zone.zx + Math.random()) * (W - margin * 2) / 3, vy: margin + (zone.zy + Math.random()) * (H - margin * 2) / 3 });
+  }
+
+  function openPointNear(p, radius = LOCAL_TANK_RADIUS + 10) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const spread = 60 + attempt * 25;
+      const pt = { vx: clamp(p.vx + (Math.random() - .5) * spread * 2, 190, localMap.width - 190), vy: clamp(p.vy + (Math.random() - .5) * spread * 2, 190, localMap.height - 190) };
+      if (!collidesLocalMap(pt, radius)) return pt;
+    }
+    return pickOpenLocalPoint(radius);
+  }
+
+  function visionRadius() {
+    return RULES.rangeStuds * (localMap ? localMap.cellSize : 352);
+  }
+
+  // Per-tank timers: survival points (alive only), respawn countdown, invulnerability and magazine reload.
+  function tickLocalTank(tank, dt) {
+    if (dt > 0) {
+      tank._v = { vx: (tank.tankPos.vx - tank._prev.vx) / dt, vy: (tank.tankPos.vy - tank._prev.vy) / dt };
+      tank._prev = { ...tank.tankPos };
+    }
+    if (tank.tankAlive) {
+      tank.tankInvulnerabilityLeft = Math.max(0, tank.tankInvulnerabilityLeft - dt);
+      tank._survival += dt;
+      const whole = Math.floor(tank._survival);
+      if (whole > 0) { tank.tankPoints += whole * RULES.survivalPoints; tank._survival -= whole; }
+    } else if (!(localGame && localGame.team)) {   // team mode: dead tanks stay dead until the next round
+      tank.tankRespawnTimer = Math.max(0, tank.tankRespawnTimer - dt);
+      if (tank.tankRespawnTimer === 0) respawnLocalTank(tank);
+    }
+    if (tank.tankReloadTimer > 0) {
+      tank.tankReloadTimer = Math.max(0, tank.tankReloadTimer - dt);
+      if (tank.tankReloadTimer === 0) tank.tankAmmo = tank.tankMaxAmmo;
+    }
+  }
+
+  function respawnLocalTank(tank) {
+    const g = localGame;
+    tank.tankPos = { ...tank._spawn };
+    tank.tankVel = { vx: 0, vy: 0 };
+    tank.tankAlive = true;
+    tank.tankRespawnTimer = 0;
+    tank.tankInvulnerabilityLeft = RULES.invulnerableSeconds;
+    // A respawned tank always starts with a full magazine and no leftover reload.
+    tank.tankAmmo = tank.tankMaxAmmo;
+    tank.tankReloadTimer = 0;
+    tank._survival = 0;
+    tank._cooldown = 1.2;
+    tank._prev = { ...tank.tankPos }; tank._v = { vx: 0, vy: 0 };
+    tank._path = []; tank._wp = null; tank._dodgeT = 0; tank._seen = 0;
+    tank._lastSeen = null; tank._targetId = null; tank._roam = null; tank._dest = null; tank._sees = false; tank._stuckT = 0; tank._escapeT = 0; tank._losCheck = 0; tank._think = Math.random() * .3;
+    if (tank === g.tanks[0]) {
+      g.spectatorTankId = '';
+      g.fireCooldown = 0;
+      updateLocalCamera(tank.tankPos, 1);
+      if (!g.team) addFeed(`Bạn đã hồi sinh. Bất tử ${RULES.invulnerableSeconds} giây, đạn đầy ${tank.tankMaxAmmo}/${tank.tankMaxAmmo}.`);
+    }
+  }
+
+  function startLocalReload(tank) {
+    if (!tank.tankAlive || tank.tankReloadTimer > 0 || tank.tankAmmo >= tank.tankMaxAmmo) return false;
+    tank.tankReloadTimer = RULES.reloadSeconds;
+    return true;
+  }
+
+  // Scoring: +10 per kill, +20 extra when the victim had a streak of 3 or more (shutdown).
+  function killLocalTank(killer, victim) {
+    const g = localGame, player = g.tanks[0];
+    const victimStreak = victim.tankKillStreak;
+    const shutdown = victimStreak >= RULES.streakStart;
+    const points = RULES.killPoints + (shutdown ? RULES.shutdownBonus : 0);
+    killer.tankKills++; killer.tankKillStreak++; killer.tankPoints += points;
+    victim.tankDeaths++; victim.tankKillStreak = 0;
+    victim.tankAlive = false; victim.tankVel = { vx: 0, vy: 0 };
+    victim.tankRespawnTimer = g.team ? 0 : RULES.respawnSeconds; victim.tankInvulnerabilityLeft = 0;
+    victim.tankReloadTimer = 0; victim._survival = 0;
+    victim._multi = { count: 0, last: -999 };
+    const multi = killer._multi;
+    multi.count = g.time - multi.last <= RULES.multiKillWindow ? multi.count + 1 : 1;
+    multi.last = g.time;
+    if (victim === player) {
+      g.spectatorTankId = killer.tankId;
+      input.fire = false;
+      setMovementSound(false);
+      stopShotSounds();
+      playSfx('explosion', .62 * SFX_MIX.explosion);
+    } else {
+      playSfx('explosion', .47 * SFX_MIX.explosion);
+    }
+    announceKill({ killer: killer.tankId, victim: victim.tankId, tier: Math.min(multi.count, 5), streak: killer.tankKillStreak, shutdown, points });
   }
 
   function updateOffline(dt) {
     if (!localGame || localGame.gameOver || isPaused) return;
     const g = localGame; g.time += dt; g.fireCooldown = Math.max(0,g.fireCooldown-dt);
     const player = g.tanks[0];
-    if (!player.tankAlive) return;
-    const dx = (input.right?1:0)-(input.left?1:0), dy = (input.up?1:0)-(input.down?1:0);
-    if (dx || dy) {
-      const len = Math.hypot(dx,dy); const mx=dx/len*150*dt, my=dy/len*150*dt;
-      const old = player.tankPos; const nextX={vx:old.vx+mx,vy:old.vy}; const nextY={vx:old.vx,vy:old.vy+my};
-      if (!hitsWall(nextX,TANK_RADIUS,true)) old.vx=clamp(nextX.vx,TANK_RADIUS,WORLD_W-TANK_RADIUS);
-      if (!hitsWall(nextY,TANK_RADIUS,true)) old.vy=clamp(nextY.vy,TANK_RADIUS,WORLD_H-TANK_RADIUS);
-      player.tankBodyAngle = Math.atan2(dy,dx);
-    }
-    const aimX=input.mouseX, aimY=WORLD_H-input.mouseY;
-    player.tankTurretAngle=Math.atan2(aimY-player.tankPos.vy,aimX-player.tankPos.vx);
     const weapon = player.tankWeapon;
     weapon.wsBuffTimeLeft=Math.max(0,weapon.wsBuffTimeLeft-dt);
     if (weapon.wsBuffTimeLeft<=0 && weapon.wsCurrentWeapon!=='NormalBullet') weapon.wsCurrentWeapon='NormalBullet';
@@ -863,7 +1646,10 @@
       localShoot(player,player.tankTurretAngle,weapon.wsCurrentWeapon);
       g.fireCooldown=weapon.wsCurrentWeapon==='NormalBullet'?0.5:1.0;
     }
-    weapon.wsCooldownState = g.fireCooldown > 0 ? { tag: 'Reloading', contents: g.fireCooldown } : 'Ready';
+    weapon.wsCooldownState = g.fireCooldown > 0 || player.tankReloadTimer > 0
+      ? { tag: 'Reloading', contents: Math.max(g.fireCooldown, player.tankReloadTimer) }
+      : 'Ready';
+
     g.boxTimer -= dt;
     if (g.boxTimer<=0 && g.boxes.length===0) {
       const pt=maze.mazeBoxSpawnPts[Math.floor(Math.random()*maze.mazeBoxSpawnPts.length)];
@@ -1033,30 +1819,76 @@
     const walls = includeInner ? allW.slice(4) : [];
     return walls.some(w => pointWallDistance(pos, w) < radius + 3);
   }
-  function pointWallDistance(pos,wall) {
-    const a=wall.wallStart,b=wall.wallEnd,px=pos.vx,py=pos.vy;
-    const vx=b.vx-a.vx,vy=b.vy-a.vy,den=vx*vx+vy*vy;
-    const t=den?clamp(((px-a.vx)*vx+(py-a.vy)*vy)/den,0,1):0;
-    return Math.hypot(px-(a.vx+t*vx),py-(a.vy+t*vy));
+
+  function circleIntersectsRect(pos, radius, rect) {
+    const x = clamp(pos.vx, rect.x, rect.x + rect.width);
+    const y = clamp(pos.vy, rect.y, rect.y + rect.height);
+    return (pos.vx - x) ** 2 + (pos.vy - y) ** 2 < radius ** 2;
   }
-  function distance(a,b){return Math.hypot(a.vx-b.vx,a.vy-b.vy)}
-  function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+
+  function pickOpenLocalPoint(radius) {
+    for (let attempt = 0; attempt < 160; attempt++) {
+      const point = { vx: 190 + Math.random() * (localMap.width - 380), vy: 190 + Math.random() * (localMap.height - 380) };
+      if (!collidesLocalMap(point, radius)) return point;
+    }
+    return { ...getLocalSpawns(localMap)[0] };
+  }
+
+  function updateLocalCamera(pos, delta) {
+    if (!localMap) return;
+    const view = localViewSize();
+    const targetX = clamp(pos.vx - view.width / 2, 0, localMap.width - view.width);
+    const targetY = clamp(pos.vy - view.height / 2, 0, localMap.height - view.height);
+    const blend = Math.min(1, delta * 8);
+    camera.x += (targetX - camera.x) * blend;
+    camera.y += (targetY - camera.y) * blend;
+  }
+
+  function localViewSize() {
+    if (!localMap) return { width: WORLD_W, height: WORLD_H };
+    const targetWidth = WORLD_W / LOCAL_CAMERA_ZOOM;
+    const width = Math.min(targetWidth, localMap.width, localMap.height * WORLD_W / WORLD_H);
+    return { width, height: width * WORLD_H / WORLD_W };
+  }
+
+  function localWorldScale() { return WORLD_W / localViewSize().width; }
+  function localToScreen(pos) {
+    const scale = localWorldScale();
+    return { x: (pos.vx - camera.x) * scale, y: (pos.vy - camera.y) * scale };
+  }
+  function screenToLocalWorld(x, y) {
+    const scale = localWorldScale();
+    return { vx: camera.x + x / scale, vy: camera.y + y / scale };
+  }
+  function distance(a, b) { return Math.hypot(a.vx - b.vx, a.vy - b.vy); }
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+  // ---------------------------------------------------------------- render loop
 
   function startRenderLoop() {
     if (animationId !== null) return;
     lastFrameTime = performance.now();
     const frame = (time) => {
       animationId = requestAnimationFrame(frame);
-      const dt = Math.min(.04, Math.max(0,(time-lastFrameTime)/1000)); lastFrameTime=time;
-      if (screenName !== 'game') return;
+      const dt = Math.min(.04, Math.max(0, (time - lastFrameTime) / 1000)); lastFrameTime = time;
+      if (screenName !== 'game') { removeCountdownOverlay(); return; }
       fpsFrameCount++;
-      if (time-fpsLast>=1000){$('fps-label').textContent=`${fpsFrameCount} FPS CLIENT`;fpsFrameCount=0;fpsLast=time;}
-      if (mode==='offline') {updateOffline(dt);latestSnapshot=localSnapshot();updateMatchHeader(latestSnapshot);updateWeaponPanel(latestSnapshot);updateScoreboard(latestSnapshot);}
+      if (time - fpsLast >= 1000) { $('fps-label').textContent = `${fpsFrameCount} FPS CLIENT`; fpsFrameCount = 0; fpsLast = time; }
+      if (mode === 'offline') {
+        updateOffline(dt);
+        latestSnapshot = localSnapshot();
+      }
+      if (time - lastHudUpdate > 100) {
+        lastHudUpdate = time;
+        if (mode === 'offline') { updateMatchHeader(latestSnapshot); updateWeaponPanel(latestSnapshot); updateScoreboard(latestSnapshot); }
+        updateRoundScore();
+        updateGameplayHud(latestSnapshot);
+      }
       renderSnapshot(latestSnapshot);
     };
-    animationId=requestAnimationFrame(frame);
+    animationId = requestAnimationFrame(frame);
   }
-  function stopRenderLoop(){if(animationId!==null){cancelAnimationFrame(animationId);animationId=null;} }
+  function stopRenderLoop() { if (animationId !== null) { cancelAnimationFrame(animationId); animationId = null; } }
 
   function renderSnapshot(snapshot) {
     resizeCanvasBacking();
@@ -1109,46 +1941,50 @@
       ctx.strokeStyle=index<4?'#68815b':'#58704d';ctx.lineWidth=index<4?10:8;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
       ctx.strokeStyle='rgba(207,232,171,.18)';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x1+(x2-x1)*.04,y1+(y2-y1)*.04-1);ctx.lineTo(x2-(x2-x1)*.04,y2-(y2-y1)*.04-1);ctx.stroke();
       // Small rivets on straight wall runs.
-      const len=Math.hypot(x2-x1,y2-y1),n=Math.floor(len/24);
-      for(let j=1;j<n;j++){const x=x1+(x2-x1)*j/n,y=y1+(y2-y1)*j/n;ctx.fillStyle='#344633';ctx.fillRect(x-1,y-1,2,2);}
-    });ctx.restore();
-  }
-
-  function drawTank(tank,height){
-    if(readField(tank,'tankAlive')===false)return;
-    const pos=readField(tank,'tankPos');if(!pos)return;
-    const x=Number(readField(pos,'vx')||0),y=height-Number(readField(pos,'vy')||0);
-    const id=readField(tank,'tankId')||'PLAYER',colorName=readField(tank,'tankColor')||'TankGreen';
-    const color=COLORS[colorName]||'#8ae65e';
-    const bodyAngle=Number(readField(tank,'tankBodyAngle')||0),turretAngle=Number(readField(tank,'tankTurretAngle')||0);
-    ctx.save();ctx.translate(x,y);
-    ctx.strokeStyle=color;ctx.globalAlpha=.6;ctx.lineWidth=1;ctx.beginPath();ctx.arc(0,0,21,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
-    // Shadows then the reused project sprite. If images fail, draw a vector tank instead.
-    ctx.fillStyle='rgba(0,0,0,.28)';ctx.beginPath();ctx.ellipse(2,4,15,19,0,0,Math.PI*2);ctx.fill();
-    const hull=images.hull;
-    if(hull&&hull.complete&&hull.naturalWidth){
-      ctx.save();ctx.rotate(Math.PI/2-bodyAngle);drawTinted(hull,color,-11,-18,22,36);ctx.restore();
-    } else drawVectorHull(color,bodyAngle);
-    const gun=images.gun;
-    if(gun&&gun.complete&&gun.naturalWidth){ctx.save();ctx.rotate(Math.PI/2-turretAngle);drawTinted(gun,color,-7,-18,14,36);ctx.restore();}
-    else {ctx.save();ctx.rotate(-turretAngle);ctx.fillStyle=color;ctx.fillRect(-3,-22,6,24);ctx.beginPath();ctx.arc(0,0,7,0,Math.PI*2);ctx.fill();ctx.restore();}
-    ctx.fillStyle='#e8f3e0';ctx.font='9px "IBM Plex Mono",monospace';ctx.textAlign='center';ctx.shadowColor='#0a100b';ctx.shadowBlur=4;ctx.fillText(String(id).slice(0,18),0,-29);ctx.shadowBlur=0;
+      const len = Math.hypot(x2 - x1, y2 - y1), n = Math.floor(len / 24);
+      for (let j = 1; j < n; j++) { const x = x1 + (x2 - x1) * j / n, y = y1 + (y2 - y1) * j / n; ctx.fillStyle = '#344633'; ctx.fillRect(x - 1, y - 1, 2, 2); }
+    });
     ctx.restore();
   }
 
-  function drawTinted(img,color,x,y,w,h){
-    // Draw the source art as-is and place a restrained colored marker; avoid washing out sprite details.
-    ctx.drawImage(img,x,y,w,h);
-    ctx.save();ctx.globalCompositeOperation='source-atop';ctx.globalAlpha=.24;ctx.fillStyle=color;ctx.fillRect(x,y,w,h);ctx.restore();
+  function drawTank(tank, height) {
+    if (readField(tank, 'tankAlive') === false) return;
+    const pos = readField(tank, 'tankPos'); if (!pos) return;
+    const x = Number(readField(pos, 'vx') || 0), y = height - Number(readField(pos, 'vy') || 0);
+    const colorName = readField(tank, 'tankColor') || 'TankGreen';
+    const color = COLORS[colorName] || '#8ae65e';
+    const bodyAngle = Number(readField(tank, 'tankBodyAngle') || 0), turretAngle = Number(readField(tank, 'tankTurretAngle') || 0);
+    ctx.save(); ctx.translate(x, y);
+    const invulnOnline = Number(readField(tank, 'tankInvulnerabilityLeft') || 0);
+    if (invulnOnline > 0) drawShield(26);
+    ctx.strokeStyle = color; ctx.globalAlpha = .6; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, 21, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
+    // Shadow then the reused project sprite. If images fail, draw a vector tank instead.
+    ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(2, 4, 15, 19, 0, 0, Math.PI * 2); ctx.fill();
+    const sprites = spritesFor(readField(tank, 'tankId'));
+    const hull = sprites.hull;
+    if (hull && hull.complete && hull.naturalWidth) {
+      ctx.save(); ctx.rotate(Math.PI / 2 - bodyAngle); drawTinted(hull, color, -11, -18, 22, 36); ctx.restore();
+    } else drawVectorHull(color, bodyAngle);
+    const gun = sprites.gun;
+    if (gun && gun.complete && gun.naturalWidth) { ctx.save(); ctx.rotate(Math.PI / 2 - turretAngle); drawTinted(gun, color, -7, -18, 14, 36); ctx.restore(); }
+    else { ctx.save(); ctx.rotate(-turretAngle); ctx.fillStyle = color; ctx.fillRect(-3, -22, 6, 24); ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+    ctx.restore();
+    const onlineName = String(readField(tank, 'tankId') || '');
+    drawNameTag(x, y - 26, onlineName, isMe(onlineName) ? '#f9df8b' : '#e8f0df');
   }
-  function drawVectorHull(color,angle){ctx.save();ctx.rotate(Math.PI/2-angle);ctx.fillStyle='#1c2921';ctx.fillRect(-10,-17,20,34);ctx.fillStyle=color;ctx.fillRect(-7,-15,14,30);ctx.fillStyle='#101811';ctx.fillRect(-3,-11,6,20);ctx.restore();}
 
-  function drawBullet(b,height){
-    const pos=readField(b,'bulPos');if(!pos)return;const type=readField(b,'bulType')||'NormalBullet';
-    const x=Number(readField(pos,'vx')||0),y=height-Number(readField(pos,'vy')||0);
-    const color=type==='LaserBullet'?'#82f9ff':type==='ShotgunBullet'?'#ffca73':type==='WallPiercingBullet'?'#c39aff':type==='GatlingBullet'?'#ff9658':'#e6efc4';
-    ctx.save();ctx.shadowColor=color;ctx.shadowBlur=9;ctx.fillStyle=color;
-    if(type==='LaserBullet'){ctx.fillRect(x-2,y-6,4,12);}else{ctx.beginPath();ctx.arc(x,y,type==='ShotgunBullet'?3.5:3,0,Math.PI*2);ctx.fill();}
+  function drawTinted(img, color, x, y, w, h) {
+    // Keep the supplied sprite intact; color overlays created opaque rectangles.
+    ctx.drawImage(img, x, y, w, h);
+  }
+  function drawVectorHull(color, angle) { ctx.save(); ctx.rotate(Math.PI / 2 - angle); ctx.fillStyle = '#1c2921'; ctx.fillRect(-10, -17, 20, 34); ctx.fillStyle = color; ctx.fillRect(-7, -15, 14, 30); ctx.fillStyle = '#101811'; ctx.fillRect(-3, -11, 6, 20); ctx.restore(); }
+
+  function drawBullet(b, height) {
+    const pos = readField(b, 'bulPos'); if (!pos) return; const type = readField(b, 'bulType') || 'NormalBullet';
+    const x = Number(readField(pos, 'vx') || 0), y = height - Number(readField(pos, 'vy') || 0);
+    const color = bulletColor(type);
+    ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 9; ctx.fillStyle = color;
+    if (type === 'LaserBullet') { ctx.fillRect(x - 2, y - 6, 4, 12); } else { ctx.beginPath(); ctx.arc(x, y, type === 'ShotgunBullet' ? 3.5 : 3, 0, Math.PI * 2); ctx.fill(); }
     ctx.restore();
   }
   function drawBox(pos, height = WORLD_H){
@@ -1315,10 +2151,18 @@
     updatePauseSoundLabel();
   });
 
-  // Small defaults are remembered locally for the next session.
-  $('player-name').value=localStorage.getItem('tankwar-name')||'';
-  $('server-url').value=localStorage.getItem('tankwar-server')||'ws://localhost:8080';
-  setTimeout(()=>{if(screenName==='game'&&mode==='online')startInputSender();},0);
+  function pointerToWorld(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const dims = getCurrentWorldDimensions();
+    input.mouseX = (clientX - rect.left) / rect.width * dims.w;
+    input.mouseY = (clientY - rect.top) / rect.height * dims.h;
+  }
+  canvas.addEventListener('mousemove', e => pointerToWorld(e.clientX, e.clientY));
+  canvas.addEventListener('mousedown', e => {
+    if (e.button === 0) { canvas.focus({ preventScroll: true }); input.fire = true; document.body.classList.add('mouse-pressed'); }
+  });
+  window.addEventListener('mouseup', e => { if (e.button === 0) { input.fire = false; document.body.classList.remove('mouse-pressed'); } });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
 
   // Start/stop the network input sender when the online game view is entered.
   const originalShowScreen=showScreen;
@@ -1386,5 +2230,5 @@
   window.addEventListener('touchend', () => { input.fire = false; });
 
   // Expose a small protocol diagnostic through the console for coursework debugging.
-  window.TankWarClient={get mode(){return mode;},get connected(){return wsReady;},get room(){return activeRoom;},send:sendMessage};
+  window.TankWarClient = { get mode() { return mode; }, get connected() { return wsReady; }, get room() { return activeRoom; }, send: sendMessage };
 })();

@@ -4,7 +4,7 @@
 
 ## 1. Chạy nhanh ở chế độ offline
 
-Cần Python 3 hoặc một static web server. Từ thư mục gốc `LTH-TankWar-HaskellGame-frontend`, mở PowerShell/CMD và chạy:
+Cần một static web server. Từ thư mục gốc `LTH-TankWar-HaskellGame`, mở PowerShell/CMD và chạy:
 
 ```powershell
 py -m http.server 5173
@@ -16,9 +16,17 @@ Mở trình duyệt tại:
 http://localhost:5173/web/
 ```
 
-Nhập tên chiến binh rồi nhấn **CHƠI THỬ NGAY**. Chế độ này chạy mô phỏng cục bộ trong trình duyệt, không cần MongoDB hay server Haskell. Điều khiển: `W/A/S/D` để di chuyển, chuột để ngắm, click trái hoặc `Space` để bắn, `Esc` để mở lựa chọn rời trận.
+Nhập tên chiến binh rồi nhấn **TẠO PHÒNG THỬ**, chọn Forest, Ruins hoặc Depot, sau đó đặt tên/chọn xe. Chế độ này ghép bạn với 3 bot cục bộ để kiểm tra map, không cần MongoDB hay server Haskell. Điều khiển: `W/A/S/D` để di chuyển, chuột để ngắm, click trái hoặc `Space` để bắn. Gameplay không hiển thị menu hoặc nút Exit; báo cáo sau trận có nút trở về trang chủ.
 
 > Nếu lệnh `py` không tồn tại trên máy, cài Python 3 hoặc dùng một static server khác. Nên chạy qua `http://localhost` thay vì mở trực tiếp file HTML.
+
+Nếu đã có Node.js, project cũng kèm preview server không cần cài package. Đây là lệnh cho bản preview hiện tại:
+
+```powershell
+node web/preview-server.js 4173
+```
+
+Mở [http://127.0.0.1:4173/](http://127.0.0.1:4173/). Nhạc menu bắt đầu ở lần click đầu tiên vì trình duyệt không cho phép tự phát âm thanh trước một thao tác của người chơi. Khi xác nhận xe, trình duyệt sẽ yêu cầu fullscreen; nếu bị từ chối, khung game vẫn tự lấp toàn bộ viewport.
 
 ## 2. Kết nối online với Haskell server hiện có
 
@@ -64,5 +72,9 @@ Frontend tĩnh có thể triển khai từ riêng thư mục `web/` lên hosting
 
 - `index.html`: các màn hình menu, lobby, phòng chờ và trận đấu.
 - `style.css`: giao diện responsive.
-- `app.js`: Canvas renderer, chế độ offline và WebSocket protocol client.
-- `assets/img/`: các sprite nhỏ được sao chép từ thư mục assets của dự án để frontend dễ triển khai độc lập.
+- `app.js`: Canvas renderer, chế độ offline 4096 có camera/tầm nhìn giới hạn, fullscreen và WebSocket protocol client.
+- `testgame.js`: cấu hình/browser-only dành cho phòng thử với bot, tách khỏi protocol backend.
+- `assets/maps/`: layout JSON và background 4096 gốc cho Forest, Ruins, Depot.
+- `assets/menu/`: background, khung đặt tên, nút bắt đầu/thoát và bảng điểm từ folder Menu/MenuEnd.
+- `assets/audio/`: nhạc menu/trận/kết quả và toàn bộ hiệu ứng âm thanh.
+- `assets/img/`: sprite tank/mystery box dùng cho client độc lập.
