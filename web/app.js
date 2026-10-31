@@ -6,62 +6,9 @@
 (() => {
   'use strict';
 
-  const WORLD_W = 1344;
-  const WORLD_H = 704;
-  const TEST_GAME = window.TankWarTestGame || {
-    enabled: false, cameraZoom: 1, collisionRadius: 128,
-    tankRenderScale: 1, enemyVisibilityRadius: Infinity, playerRespawnSeconds: 5,
-    defaultMapId: 'forest', localBotNames: ['CPU-ALPHA', 'CPU-BRAVO', 'CPU-DELTA'], winKills: Infinity
-  };
-  // Game rules. Every number can be tuned from testgame.js; these are the defaults.
-  const RULES = {
-    respawnSeconds: Number(TEST_GAME.playerRespawnSeconds ?? 5),
-    invulnerableSeconds: Number(TEST_GAME.respawnInvulnerableSeconds ?? 1.5),
-    magazineSize: Number(TEST_GAME.magazineSize ?? 6),
-    reloadSeconds: Number(TEST_GAME.reloadSeconds ?? 2.2),
-    survivalPoints: Number(TEST_GAME.survivalPointsPerSecond ?? 3),
-    killPoints: Number(TEST_GAME.killPoints ?? 10),
-    shutdownBonus: Number(TEST_GAME.shutdownBonus ?? 20),
-    streakStart: Number(TEST_GAME.streakStartKills ?? 3),
-    multiKillWindow: Number(TEST_GAME.multiKillWindowSeconds ?? 10),
-    rangeStuds: Number(TEST_GAME.rangeStuds ?? 4.5),
-    bulletRangeMap: Number(TEST_GAME.bulletRangeMap ?? .5),   // how far a bullet flies, as a fraction of the map size (.5 = half the map)
-    matchSeconds: Number(TEST_GAME.matchSeconds ?? 300),
-    teamRounds: Math.max(1, Math.round(Number(TEST_GAME.teamRounds ?? 5))),
-    teamRoundSeconds: Number(TEST_GAME.teamRoundSeconds ?? 120),
-    teamRoundEndDelay: Number(TEST_GAME.teamRoundEndDelaySeconds ?? 5)
-  };
-  const MULTI_TITLES = { 1: 'SLAIN', 2: 'DOUBLE KILL', 3: 'TRIPLE KILL', 4: 'QUADRA KILL', 5: 'PENTAKILL' };
-  // Bot difficulty. speed = px/s in the 1344-wide logical world (the player moves at 150),
-  // fire = seconds between shots, aim = random aim error (rad), react = delay before the first shot after
-  // spotting a target, range = fraction of the vision range, lead = how well it aims ahead of a moving target,
-  // dodge = chance to sidestep an incoming bullet, turn = turret speed (rad/s), think = how often it re-plans.
-  const MAX_BOTS = 6;
-  const MAX_TEAM_BOTS = 9;   // 5v5 = you + 4 allies + 5 enemies
-  const BOT_LEVELS = {
-    easy: { label: 'EASY', speed: 55, fire: [2.6, 3.6], aim: .5, react: .9, range: .75, lead: 0, los: false, path: false, dodge: 0, strafe: false, hunt: false, turn: 2.5, think: .8,
-      hint: 'Bot chậm, ngắm lệch, đi thẳng vào tường và bắn cả khi không nhìn thấy mục tiêu. Bot bắn cả bạn lẫn bot khác.' },
-    medium: { label: 'MEDIUM', speed: 78, fire: [1.6, 2.4], aim: .2, react: .6, range: 1.0, lead: 0, los: true, path: true, dodge: 0, strafe: false, hunt: false, turn: 4.5, think: .6,
-      hint: 'Bot biết tìm đường vòng qua tường và chỉ bắn khi nhìn thấy mục tiêu. Bot bắn cả bạn lẫn bot khác.' },
-    hard: { label: 'HARD', speed: 105, fire: [1.0, 1.5], aim: .08, react: .35, range: 1.15, lead: .7, los: true, path: true, dodge: .6, strafe: true, hunt: true, turn: 9, think: .35,
-      hint: 'Bot bắn đón đầu, di chuyển né đạn, giữ khoảng cách. Bot bắn cả bạn lẫn bot khác.' },
-    extreme: { label: 'EXTREME', speed: 132, fire: [.6, .95], aim: .025, react: .15, range: 1.3, lead: 1, los: true, path: true, dodge: 1, strafe: true, hunt: true, turn: 22, think: .2,
-      hint: 'Bot gần nhanh bằng bạn, ngắm gần như chuẩn, né đạn liên tục và săn mục tiêu gần nhất.' }
-  };
-  const botSettings = {
-    difficulty: BOT_LEVELS[TEST_GAME.botDifficulty] ? TEST_GAME.botDifficulty : 'medium',
-    bots: Math.max(1, Math.min(MAX_BOTS, Math.round(Number(TEST_GAME.localBotCount ?? 3)))),
-    teamSize: 0,   // 0 = free-for-all, 2 / 3 / 4 / 5 = team mode (2v2, 3v3, 4v4, 5v5)
-    matchSeconds: Number(TEST_GAME.matchSeconds ?? 300),            // free-for-all match length (chosen on the map screen)
-    teamRoundSeconds: Number(TEST_GAME.teamRoundSeconds ?? 120),    // team mode: length of one round
-    teamRounds: Math.max(1, Math.min(20, Math.round(Number(TEST_GAME.teamRounds ?? 5))))   // team mode: number of rounds (1-20)
-  };
-  const LOCAL_WORLD_SIZE = 4096;
-  const LOCAL_TANK_SIZE = 256;
-  const LOCAL_TANK_RADIUS = TEST_GAME.collisionRadius;
-  const LOCAL_CAMERA_ZOOM = TEST_GAME.cameraZoom;
-  const LOCAL_WALL_THICKNESS = 88;
-  const LOCAL_SPEED_SCALE = LOCAL_WORLD_SIZE / WORLD_W;
+  let WORLD_W = 1344;
+  let WORLD_H = 704;
+  const TANK_RADIUS = 15;
   const COLORS = {
     TankRed: '#ff655d', TankBlue: '#5ca9ff', TankGreen: '#8ae65e', TankYellow: '#ffd45d',
     red: '#ff655d', blue: '#5ca9ff', green: '#8ae65e', yellow: '#ffd45d'
@@ -167,307 +114,371 @@
   const lastKnownStreak = new Map();
   const shotVoices = {};
 
-  const MAP_META = {
-    forest: { label: 'FOREST', title: 'RỪNG RẬM', accent: '#b9d66a' },
-    ruins: { label: 'RUINS', title: 'PHẾ TÍCH', accent: '#d6a77a' },
-    depot: { label: 'DEPOT', title: 'KHO HÀNG', accent: '#d7ad65' }
+  const SoundFX = {
+    init() {
+      if (!audioContext) {
+        try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) {}
+      }
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+    },
+    shoot(type) {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        if (type === 'LaserBullet') {
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(920, now);
+          osc.frequency.exponentialRampToValueAtTime(200, now + 0.12);
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+          osc.start(now); osc.stop(now + 0.12);
+        } else if (type === 'ShotgunBullet') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(250, now);
+          osc.frequency.exponentialRampToValueAtTime(50, now + 0.18);
+          gain.gain.setValueAtTime(0.14, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+          osc.start(now); osc.stop(now + 0.18);
+        } else if (type === 'GatlingBullet') {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(520, now);
+          osc.frequency.exponentialRampToValueAtTime(140, now + 0.05);
+          gain.gain.setValueAtTime(0.06, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+          osc.start(now); osc.stop(now + 0.05);
+        } else if (type === 'WallPiercingBullet') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(580, now);
+          osc.frequency.linearRampToValueAtTime(260, now + 0.14);
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+          osc.start(now); osc.stop(now + 0.14);
+        } else {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(400, now);
+          osc.frequency.exponentialRampToValueAtTime(100, now + 0.09);
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+          osc.start(now); osc.stop(now + 0.09);
+        }
+      } catch (_) {}
+    },
+    bounce() {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(750, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.035);
+        gain.gain.setValueAtTime(0.035, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+        osc.connect(gain); gain.connect(audioContext.destination);
+        osc.start(now); osc.stop(now + 0.035);
+      } catch (_) {}
+    },
+    explosion() {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(160, now);
+        osc.frequency.exponentialRampToValueAtTime(28, now + 0.35);
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        osc.connect(gain); gain.connect(audioContext.destination);
+        osc.start(now); osc.stop(now + 0.35);
+      } catch (_) {}
+    },
+    pickup() {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+          const t = audioContext.currentTime + i * 0.055;
+          const osc = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          osc.type = 'triangle';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.08, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+          osc.connect(gain); gain.connect(audioContext.destination);
+          osc.start(t); osc.stop(t + 0.1);
+        });
+      } catch (_) {}
+    },
+    countdown(seconds) {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        const isStart = Number(seconds) <= 0;
+        osc.type = 'sine';
+        osc.frequency.value = isStart ? 880 : 440;
+        gain.gain.setValueAtTime(0.09, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + (isStart ? 0.3 : 0.09));
+        osc.connect(gain); gain.connect(audioContext.destination);
+        osc.start(now); osc.stop(now + (isStart ? 0.3 : 0.09));
+      } catch (_) {}
+    },
+    victory() {
+      if (!soundEnabled) return;
+      this.init();
+      if (!audioContext) return;
+      try {
+        [440, 554.37, 659.25, 880].forEach((freq, i) => {
+          const t = audioContext.currentTime + i * 0.09;
+          const osc = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          osc.type = 'triangle';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.1, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+          osc.connect(gain); gain.connect(audioContext.destination);
+          osc.start(t); osc.stop(t + 0.22);
+        });
+      } catch (_) {}
+    }
   };
   const trainingMaps = new Map();
   const camera = { x: 0, y: 0 };
   // Online maze data always comes from the server snapshot (wsMaze); this is only a fallback.
   const maze = { mazeWidth: WORLD_W, mazeHeight: WORLD_H, mazeWalls: [] };
 
-  const AUDIO_FILES = {
-    menu: 'assets/audio/backgroundmenunew.mp3?v=1', endMenu: 'assets/audio/backgroundmenuend.mp3', game: 'assets/audio/musicongamenew.mp3?v=1',
-    click: 'assets/audio/clickmouse.mp3', pickup: 'assets/audio/claimitem.mp3',
-    explosion: 'assets/audio/explosion.mp3', winner: 'assets/audio/gamewinner.mp3', gameover: 'assets/audio/gameover.mp3',
-    // Team modes (2v2 / 3v3 / 4v4 / 5v5) use their own end jingles; winner / gameover above are for free-for-all.
-    winner2: 'assets/audio/gamewinner2.mp3', gameover2: 'assets/audio/gameover2.mp3',
-    // Announcer voice ("Victory" / "Defeat") played together with the VICTORY / DEFEAT screen; it is extra, the jingles above stay.
-    endVictory: 'assets/audio/end_victory.mp3', endDefeat: 'assets/audio/end_defeat.mp3',
-    move: 'assets/audio/tankmove.mp3', normalShot: 'assets/audio/sungshot.mp3',
-    laserShot: 'assets/audio/laser.mp3', gatlingShot: 'assets/audio/tieulien.mp3', piercingShot: 'assets/audio/xuyentuong.mp3',
-    // Kill announcer voices. Drop your own files with these names into assets/audio/.
-    // A missing file falls back to a short built-in synth sound, so nothing breaks.
-    // slain = you kill an enemy; defeated = an enemy kills you; enemy_defeated = an enemy kills another enemy.
-    slain: 'assets/audio/slain.mp3', defeated: 'assets/audio/defeated.mp3', enemyDefeated: 'assets/audio/enemy_defeated.mp3',
-    // Team modes (2v2 / 3v3 / 4v4 / 5v5): our side scores -> enemy_defeated; the enemy scores on our side -> ally_defeated.
-    allyDefeated: 'assets/audio/ally_defeated.mp3',
-    doubleKill: 'assets/audio/doublekill.mp3', tripleKill: 'assets/audio/triplekill.mp3',
-    quadraKill: 'assets/audio/quadrakill.mp3', pentaKill: 'assets/audio/pentakill.mp3',
-    // First blood: one shared file for both you and the enemy.
-    firstBlood: 'assets/audio/firstblood.mp3',
-    shutdown: 'assets/audio/shutdown.mp3',
-    // Last-minute soundtrack: starts the moment 60 seconds remain and loops until the match (or team round) ends.
-    oneMinute: 'assets/audio/1mincountdown.mp3',
-    // Team modes: announced at the start of a round when a team is one round win away from the match.
-    matchPoint: 'assets/audio/matchpoint.mp3', matchPoint2: 'assets/audio/matchpoint2.mp3',   // one of the two is picked at random for every match-point round
-    // Team modes: played when your team wipes out the whole enemy team in a round.
-    ace: 'assets/audio/ace.mp3',
-    enemyAce: 'assets/audio/enemy_ace.mp3',   // the enemy team wipes out your whole team
-    // Kill-streak announcements (consecutive kills without dying, when the kills are too far apart for a multi-kill)
-    ultimate: 'assets/audio/ultimate.mp3', onslaught: 'assets/audio/onslaught.mp3', bloodbath: 'assets/audio/bloodbath.mp3',
-    dominating: 'assets/audio/dominating.mp3', legendary: 'assets/audio/legendary.mp3',
-    // The same announcements when an ENEMY scores them (enemy kills an enemy, or kills you).
-    enemyDoubleKill: 'assets/audio/enemy_doublekill.mp3', enemyTripleKill: 'assets/audio/enemy_triplekill.mp3',
-    enemyQuadraKill: 'assets/audio/enemy_quadrakill.mp3', enemyPentaKill: 'assets/audio/enemy_pentakill.mp3',
-    enemyUltimate: 'assets/audio/enemy_ultimate.mp3', enemyOnslaught: 'assets/audio/enemy_onslaught.mp3',
-    enemyBloodbath: 'assets/audio/enemy_bloodbath.mp3', enemyDominating: 'assets/audio/enemy_dominating.mp3',
-    enemyLegendary: 'assets/audio/enemy_legendary.mp3'
-  };
-  // 'doubleKill' -> 'enemyDoubleKill' when an enemy earned the announcement.
-  const voiceKey = (key, enemy) => enemy ? `enemy${key[0].toUpperCase()}${key.slice(1)}` : key;
-  const STREAK_TITLES = { 3: 'ULTIMATE', 4: 'ONSLAUGHT', 5: 'BLOODBATH', 6: 'DOMINATING', 7: 'LEGENDARY' };
-  const STREAK_SOUNDS = { 3: 'ultimate', 4: 'onslaught', 5: 'bloodbath', 6: 'dominating', 7: 'legendary' };
-  const MULTI_SOUNDS = { 2: 'doubleKill', 3: 'tripleKill', 4: 'quadraKill', 5: 'pentaKill' };
-  const musicTracks = {
-    menu: createLoopingAudio(AUDIO_FILES.menu, .28),
-    game: createLoopingAudio(AUDIO_FILES.game, 1.00),
-    results: createLoopingAudio(AUDIO_FILES.endMenu, .30),
-    countdown: createLoopingAudio(AUDIO_FILES.oneMinute, 1.00),
-    matchpoint: createLoopingAudio(AUDIO_FILES.matchPoint, 1.00),
-    matchpoint2: createLoopingAudio(AUDIO_FILES.matchPoint2, 1.00)
-  };
-  let countdownActive = false, countdownBroken = false;
-  // Set when the match ends: the in-match music (playlist, 1-minute track, match-point track) is cut at once and stays off
-  // until the player leaves the gameplay screen.
-  let battleMusicStopped = false;
-  function stopBattleMusic() {
-    battleMusicStopped = true;
-    ['game', 'countdown', 'matchpoint', 'matchpoint2'].forEach(name => { musicTracks[name].pause(); musicTracks[name].currentTime = 0; });
-    currentMusic = 'silence';
-  }
-  // Team modes: in a match-point round, matchpoint.mp3 is the ONLY music (it replaces the game playlist and the 1-minute track) until the round ends.
-  // matchpoint.mp3 or matchpoint2.mp3 is picked at random per match-point round; a missing file is skipped.
-  let matchPointActive = false, matchPointTrack = 'matchpoint';
-  const matchPointBrokenNames = new Set();
-  function pickMatchPointTrack() {
-    const ok = ['matchpoint', 'matchpoint2'].filter(name => !matchPointBrokenNames.has(name));
-    return ok.length ? ok[Math.floor(Math.random() * ok.length)] : null;   // null = both files missing: keep the normal music
-  }
-  ['matchpoint', 'matchpoint2'].forEach(name => musicTracks[name].addEventListener('error', () => {
-    matchPointBrokenNames.add(name);
-    if (matchPointActive && matchPointTrack === name) { matchPointTrack = pickMatchPointTrack(); matchPointActive = !!matchPointTrack; }
-    syncMusicForScreen();
-  }));
-  musicTracks.countdown.addEventListener('error', () => { countdownBroken = true; countdownActive = false; syncMusicForScreen(); });   // missing file: keep the normal music
-  // Loudness of the battle sounds (1 = old level). Lower = quieter; tune in testgame.js -> sfxMix.
-  const SFX_MIX = Object.assign({ shot: .55, move: .55, explosion: .6 }, TEST_GAME.sfxMix || {});
-  const movementTrack = createLoopingAudio(AUDIO_FILES.move, .13 * SFX_MIX.move);
-  // In-match music playlist: tracks cycle in order (testgame.js -> gameMusic); a missing file is skipped.
-  const gameTrack = musicTracks.game;
-  gameTrack._list = (Array.isArray(TEST_GAME.gameMusic) && TEST_GAME.gameMusic.length) ? TEST_GAME.gameMusic.slice(0, 6)
-    : [AUDIO_FILES.game, 'assets/audio/musicongame2.mp3', 'assets/audio/musicongame3.mp3'];   // default playlist even without testgame.js
-  gameTrack._i = Math.floor(Math.random() * gameTrack._list.length);
-  gameTrack._fails = 0;
-  gameTrack.loop = gameTrack._list.length === 1;
-  function playGameTrack(index) {
-    const list = gameTrack._list;
-    gameTrack._i = ((index % list.length) + list.length) % list.length;
-    gameTrack.src = list[gameTrack._i];
-    gameTrack.load();
-    if (soundEnabled && audioUnlocked && screenName === 'game' && !battleMusicStopped) gameTrack.play().catch(() => {});
-  }
-  if (gameTrack._list.length > 1) {
-    gameTrack.src = gameTrack._list[gameTrack._i];
-    gameTrack.addEventListener('playing', () => { gameTrack._fails = 0; });
-    gameTrack.addEventListener('ended', () => playGameTrack(gameTrack._i + 1));
-    gameTrack.addEventListener('error', () => {
-      if (++gameTrack._fails <= gameTrack._list.length) playGameTrack(gameTrack._i + 1);   // skip a missing / broken file
-    });
-  }
+  let maze = generateRandomMaze();
 
+  function generateRandomMaze() {
+    // Kích thước thế giới bám theo device-width với lưới ô chuẩn cs = 64px (luôn gấp đôi xe tank: 30px * 2)
+    const winW = window.innerWidth || document.documentElement.clientWidth || 1344;
+    const winH = window.innerHeight || document.documentElement.clientHeight || 704;
+    const aspect = Math.max(1.3, Math.min(2.5, winW / winH));
 
-  const mapLoadPromise = loadTrainingMaps().catch(error => {
-    mapLoadError = error && error.message ? error.message : 'Không đọc được dữ liệu map.';
-    return null;
-  });
+    const cs = 64; // 1 ô lưới = 64px = 2 xe tank (tankRadius = 15 => diameter = 30px)
+    const numRows = 11; // h = 704px
+    const h = numRows * cs;
+    const baseW = Math.round(h * aspect);
+    const numCols = Math.max(21, Math.round(baseW / cs));
+    const w = numCols * cs;
+    WORLD_W = w;
+    WORLD_H = h;
 
-  async function loadTrainingMaps() {
-    const ids = Object.keys(MAP_META);
-    await Promise.all(ids.map(async id => {
-      const response = await fetch(`assets/maps/${id}_layout.json`, { cache: 'force-cache' });
-      if (!response.ok) throw new Error(`Không tải được layout ${id.toUpperCase()} (${response.status}).`);
-      const source = await response.json();
-      const image = new Image();
-      image.src = `assets/maps/${id}_maze_4096.png`;
-      trainingMaps.set(id, normaliseTrainingMap(id, source, image));
-    }));
-  }
+    const vec = (x, y) => ({ vx: Math.round(x * cs), vy: Math.round(y * cs) });
+    const wall = (x1, y1, x2, y2) => ({ wallStart: vec(x1, y1), wallEnd: vec(x2, y2) });
 
-  function normaliseTrainingMap(id, source, background) {
-    const number = value => Number(value || 0);
-    const width = number(source.width) || LOCAL_WORLD_SIZE;
-    const height = number(source.height) || LOCAL_WORLD_SIZE;
-    const cellSize = number(source.cell_size) || 352;
-    const gridOffset = number(source.grid_offset) || 112;
-    const wallRects = (source.wall_rectangles || []).map(rect => ({
-      x: number(rect.x), y: number(rect.y), width: number(rect.width), height: number(rect.height), kind: 'wall'
-    }));
-    const blockedRects = (source.blocked_cells || []).map(cell => {
-      const col = number(cell[0]), row = number(cell[1]);
-      return { x: gridOffset + col * cellSize, y: gridOffset + row * cellSize, width: cellSize, height: cellSize, kind: 'blocked' };
-    });
-    const spawns = (source.spawn_centres || []).map(point => ({ vx: number(point[0]), vy: number(point[1]) }));
-    return {
-      id, label: MAP_META[id].label, title: MAP_META[id].title, accent: MAP_META[id].accent,
-      width, height, cellSize, gridOffset,
-      tankSize: number(source.tank_reference_size) || LOCAL_TANK_SIZE,
-      tankScale: number(source.tank_render_scale) || 1,
-      wallThickness: number(source.wall_thickness) || LOCAL_WALL_THICKNESS,
-      wallRects, blockedRects, collisionRects: wallRects.concat(blockedRects), spawns, background
-    };
-  }
+    // 4 bức tường biên bao quanh chiến trường
+    const borderWalls = [
+      { wallStart: { vx: 0, vy: 0 }, wallEnd: { vx: w, vy: 0 } },
+      { wallStart: { vx: w, vy: 0 }, wallEnd: { vx: w, vy: h } },
+      { wallStart: { vx: w, vy: h }, wallEnd: { vx: 0, vy: h } },
+      { wallStart: { vx: 0, vy: h }, wallEnd: { vx: 0, vy: 0 } }
+    ];
 
-  // ---------------------------------------------------------------- audio
+    // Thuật toán sinh mê cung rối cả dọc lẫn ngang:
+    // 1. Tường cả dọc cả ngang đan xen nhau tạo góc L, T, ngã tư rối mắt, không song song
+    // 2. Luôn có khe hở thoát (mỗi ô luôn có ít nhất 2 lối đi, minDegree >= 2), không bao giờ bị bít kín
+    // 3. Toàn bộ mê cung 100% liên thông, không có ngõ cụt hiểm
+    // 4. Các đoạn tường được ghép nối thành tường dài
+    // 5. Khoảng cách giữa các tường luôn đúng 64px = 2 thân xe tank
+    const wallSet = new Set();
+    const cols = numCols, rows = numRows;
 
-  function createLoopingAudio(src, volume) {
-    const track = new Audio(src);
-    track.preload = 'auto';
-    track.loop = true;
-    track._baseVolume = volume;
-    track.volume = volume;
-    return track;
-  }
-
-  function applyMusicVolume() {
-    Object.values(musicTracks).forEach(track => { track.volume = Math.max(0, Math.min(1, track._baseVolume * musicScale)); });
-  }
-
-  // Long one-shot samples (laser, gatling, piercing) must never overlap or repeat.
-  // One <audio> voice per sample: a new shot restarts it, and the tail is faded out
-  // after a hard cap so a long file can no longer sound like a loop.
-  const SHOT_MAX_MS = { laserShot: 850, gatlingShot: 700, piercingShot: 900 };
-
-  function playShot(name, volume = .45) {
-    if (!soundEnabled || !audioUnlocked || !AUDIO_FILES[name]) return;
-    let voice = shotVoices[name];
-    if (!voice) {
-      const audio = new Audio(AUDIO_FILES[name]);
-      audio.preload = 'auto';
-      voice = shotVoices[name] = { audio, timer: 0, fade: 0 };
+    function isConnected() {
+      const visited = new Set();
+      const queue = [{ c: 0, r: 0 }];
+      visited.add('0,0');
+      while (queue.length > 0) {
+        const { c, r } = queue.shift();
+        if (r + 1 < rows && !wallSet.has('H:' + c + ',' + (r + 1))) {
+          const k = c + ',' + (r + 1); if (!visited.has(k)) { visited.add(k); queue.push({ c, r: r + 1 }); }
+        }
+        if (r - 1 >= 0 && !wallSet.has('H:' + c + ',' + r)) {
+          const k = c + ',' + (r - 1); if (!visited.has(k)) { visited.add(k); queue.push({ c, r: r - 1 }); }
+        }
+        if (c + 1 < cols && !wallSet.has('V:' + (c + 1) + ',' + r)) {
+          const k = (c + 1) + ',' + r; if (!visited.has(k)) { visited.add(k); queue.push({ c: c + 1, r }); }
+        }
+        if (c - 1 >= 0 && !wallSet.has('V:' + c + ',' + r)) {
+          const k = (c - 1) + ',' + r; if (!visited.has(k)) { visited.add(k); queue.push({ c: c - 1, r }); }
+        }
+      }
+      return visited.size === cols * rows;
     }
-    const audio = voice.audio;
-    clearTimeout(voice.timer); clearInterval(voice.fade);
-    audio.loop = false;
-    audio.pause();
-    audio.currentTime = 0;
-    audio.volume = volume;
-    audio.play().catch(() => {});
-    const maxMs = SHOT_MAX_MS[name] || 800;
-    voice.timer = setTimeout(() => {
-      let level = volume;
-      voice.fade = setInterval(() => {
-        level -= volume / 6;
-        if (level <= .02) { clearInterval(voice.fade); audio.pause(); audio.currentTime = 0; }
-        else audio.volume = level;
-      }, 25);
-    }, Math.max(100, maxMs - 150));
+
+    function getMinDegree() {
+      let minD = 4;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          let deg = 0;
+          if (r + 1 < rows && !wallSet.has('H:' + c + ',' + (r + 1))) deg++;
+          if (r - 1 >= 0 && !wallSet.has('H:' + c + ',' + r)) deg++;
+          if (c + 1 < cols && !wallSet.has('V:' + (c + 1) + ',' + r)) deg++;
+          if (c - 1 >= 0 && !wallSet.has('V:' + c + ',' + r)) deg++;
+          if (deg < minD) minD = deg;
+        }
+      }
+      return minD;
+    }
+
+    const hCandidates = [];
+    for (let r = 1; r < rows; r++) {
+      for (let c = 1; c < cols - 2; c += 2) {
+        const len = 2 + Math.floor(Math.random() * 4);
+        const endC = Math.min(cols - 1, c + len);
+        if (endC - c >= 2) hCandidates.push({ type: 'H', x1: c, y1: r, x2: endC, y2: r });
+      }
+    }
+
+    const vCandidates = [];
+    for (let c = 1; c < cols; c++) {
+      for (let r = 1; r < rows - 2; r += 2) {
+        const len = 2 + Math.floor(Math.random() * 3);
+        const endR = Math.min(rows - 1, r + len);
+        if (endR - r >= 2) vCandidates.push({ type: 'V', x1: c, y1: r, x2: c, y2: endR });
+      }
+    }
+
+    hCandidates.sort(() => Math.random() - 0.5);
+    vCandidates.sort(() => Math.random() - 0.5);
+
+    const candidates = [];
+    const maxLen = Math.max(hCandidates.length, vCandidates.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (i < hCandidates.length) candidates.push(hCandidates[i]);
+      if (i < vCandidates.length) candidates.push(vCandidates[i]);
+    }
+
+    for (const cand of candidates) {
+      const addedEdges = [];
+      if (cand.type === 'H') {
+        for (let x = cand.x1; x < cand.x2; x++) {
+          const edge = 'H:' + x + ',' + cand.y1;
+          if (!wallSet.has(edge)) { wallSet.add(edge); addedEdges.push(edge); }
+        }
+      } else {
+        for (let y = cand.y1; y < cand.y2; y++) {
+          const edge = 'V:' + cand.x1 + ',' + y;
+          if (!wallSet.has(edge)) { wallSet.add(edge); addedEdges.push(edge); }
+        }
+      }
+      if (addedEdges.length > 0 && isConnected() && getMinDegree() >= 2) {
+        // Chấp nhận đoạn tường
+      } else {
+        // Hoàn tác để giữ khe hở và bảo đảm đường đi luôn thông suốt
+        for (const edge of addedEdges) wallSet.delete(edge);
+      }
+    }
+
+    // Hợp nhất các đoạn thẳng hàng liền kề thành tường dài mê cung
+    const innerWalls = [];
+    for (let r = 1; r < rows; r++) {
+      let start = null;
+      for (let c = 0; c <= cols; c++) {
+        if (c < cols && wallSet.has('H:' + c + ',' + r)) {
+          if (start === null) start = c;
+        } else {
+          if (start !== null) {
+            innerWalls.push(wall(start, r, c, r));
+            start = null;
+          }
+        }
+      }
+    }
+    for (let c = 1; c < cols; c++) {
+      let start = null;
+      for (let r = 0; r <= rows; r++) {
+        if (r < rows && wallSet.has('V:' + c + ',' + r)) {
+          if (start === null) start = r;
+        } else {
+          if (start !== null) {
+            innerWalls.push(wall(c, start, c, r));
+            start = null;
+          }
+        }
+      }
+    }
+
+    const mazeWalls = [...borderWalls, ...innerWalls];
+
+    // Các điểm spawn thoáng rộng tại tâm các ô hành lang (cách tường 32px)
+    const candidateSpawns = [];
+    for (let r = 0; r < rows; r += 2) {
+      for (let c = 1; c < cols; c += 3) {
+        candidateSpawns.push({ vx: Math.round((c + 0.5) * cs), vy: Math.round((r + 0.5) * cs) });
+      }
+    }
+
+    const mazeSpawnPts = candidateSpawns.filter(pt => {
+      return !innerWalls.some(w => pointWallDistance(pt, w) < 26);
+    }).sort(() => Math.random() - 0.5);
+
+    if (mazeSpawnPts.length < 4) {
+      mazeSpawnPts.push(
+        { vx: Math.round(1.5 * cs), vy: Math.round(0.5 * cs) },
+        { vx: Math.round((numCols - 1.5) * cs), vy: Math.round(0.5 * cs) },
+        { vx: Math.round(1.5 * cs), vy: Math.round((numRows - 0.5) * cs) },
+        { vx: Math.round((numCols - 1.5) * cs), vy: Math.round((numRows - 0.5) * cs) }
+      );
+    }
+
+    const mazeBoxSpawnPts = [
+      { vx: Math.round((numCols / 2) * cs), vy: Math.round(5.5 * cs) },
+      { vx: Math.round(numCols * 0.25 * cs), vy: Math.round(3.5 * cs) },
+      { vx: Math.round(numCols * 0.75 * cs), vy: Math.round(3.5 * cs) },
+      { vx: Math.round(numCols * 0.25 * cs), vy: Math.round(7.5 * cs) },
+      { vx: Math.round(numCols * 0.75 * cs), vy: Math.round(7.5 * cs) }
+    ].filter(pt => !innerWalls.some(w => pointWallDistance(pt, w) < 22));
+
+    if (mazeBoxSpawnPts.length === 0) {
+      mazeBoxSpawnPts.push({ vx: Math.round((numCols / 2) * cs), vy: Math.round(5.5 * cs) });
+    }
+
+    return { mazeWidth: w, mazeHeight: h, mazeWalls, mazeSpawnPts, mazeBoxSpawnPts };
   }
 
-  // Announcer voice: one channel. `done` is called once when the voice has ended (or failed / is disabled),
-  // so the announcement queue can start the next one.
-  let currentVoice = null;
-  const voiceTemplates = {};
-  // Announcer files are fetched/decoded ahead of time so a kill voice starts instantly instead of after a load delay.
-  function preloadVoices() {
-    Object.keys(AUDIO_FILES).forEach(name => {
-      if (voiceTemplates[name] || !/^(slain|defeated|enemyDefeated|allyDefeated|doubleKill|tripleKill|quadraKill|pentaKill|firstBlood|shutdown|matchPoint|ace|ultimate|onslaught|bloodbath|dominating|legendary|enemy[A-Z].*)$/.test(name)) return;
-      const a = new Audio(AUDIO_FILES[name]); a.preload = 'auto'; try { a.load(); } catch (e) {}
-      voiceTemplates[name] = a;
-    });
-  }
-  const VOICE_MAX_MS = 5000;   // never let a stuck or very long file block the queue
-  function playVoice(name, volume = .7, fallback = null, done = null) {
-    let finished = false, guard = 0;
-    const finish = () => { if (finished) return; finished = true; clearTimeout(guard); if (done) done(); };
-    if (!soundEnabled || !audioUnlocked || !AUDIO_FILES[name]) { finish(); return; }
-    if (currentVoice) { currentVoice.pause(); currentVoice = null; }
-    const audio = voiceTemplates[name] ? voiceTemplates[name].cloneNode(true) : new Audio(AUDIO_FILES[name]);
-    audio.volume = volume;
-    currentVoice = audio;
-    guard = setTimeout(finish, VOICE_MAX_MS);
-    let fell = false;
-    const useFallback = () => { if (!fell) { fell = true; if (fallback) fallback(); finish(); } };
-    audio.addEventListener('ended', finish, { once: true });
-    audio.addEventListener('error', useFallback, { once: true });
-    audio.play().catch(error => { if (error && error.name === 'NotSupportedError') useFallback(); else finish(); });
-  }
+  function getRandomSpawnPoint(m, existingTanks = []) {
+    const spawns = (m && m.mazeSpawnPts) ? m.mazeSpawnPts : [];
+    const curW = (m && m.mazeWidth) ? m.mazeWidth : WORLD_W;
+    const curH = (m && m.mazeHeight) ? m.mazeHeight : WORLD_H;
+    const wallsToCheck = (m && m.mazeWalls) ? m.mazeWalls : (maze && maze.mazeWalls ? maze.mazeWalls : []);
 
-  function queueAnnouncement(item) {
-    // A plain kill voice is only worth hearing right away: drop older plain voices still waiting, so they don't pile up and play late.
-    if (!item.banner) for (let i = announceQueue.length - 1; i >= 0; i--) if (!announceQueue[i].banner) announceQueue.splice(i, 1);
-    announceQueue.push(item);
-    while (announceQueue.length > 60) announceQueue.shift();   // effectively unlimited: every announcement is shown, one after another
-  }
-
-  // Plays the queued announcements in order: show the banner, speak the voice, then move on to the next one.
-  function runAnnouncements() {
-    if (announceBusy) return;
-    const item = announceQueue.shift();
-    if (!item) return;
-    announceBusy = true;
-    const gen = announceGen;
-    let voiceDone = !item.voice, timeDone = false;
-    const next = () => {
-      if (gen !== announceGen || !voiceDone || !timeDone) return;
-      announceBusy = false;
-      runAnnouncements();
-    };
-    if (item.banner) showKillBanner(...item.banner);
-    if (item.banner) announceTimer = setTimeout(() => { timeDone = true; next(); }, ANNOUNCE_MIN_MS); else timeDone = true;   // voice-only items don't need to hold a banner
-    if (item.voice) playVoice(item.voice, item.vol, item.fallback, () => { voiceDone = true; next(); });
-  }
-
-  function resetAnnouncements() {
-    announceGen++;
-    announceQueue.length = 0;
-    announceBusy = false;
-    clearTimeout(announceTimer);
-    if (currentVoice) { currentVoice.pause(); currentVoice = null; }
-  }
-
-  function stopShotSounds() {
-    Object.values(shotVoices).forEach(voice => {
-      clearTimeout(voice.timer); clearInterval(voice.fade);
-      voice.audio.pause(); voice.audio.currentTime = 0;
-    });
-  }
-
-  // Small synthesised sting for kills: more notes for a higher multi-kill, falling tone for a shutdown.
-  function playKillSting(level = 1, shutdown = false) {
-    if (!soundEnabled || !audioUnlocked) return;
-    try {
-      killAudioCtx = killAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      if (killAudioCtx.state === 'suspended') killAudioCtx.resume();
-      const notes = shutdown && level < 2 ? [392, 330, 262] : [523, 587, 659, 784, 1047].slice(0, Math.max(1, Math.min(5, level)));
-      notes.forEach((freq, i) => {
-        const t = killAudioCtx.currentTime + i * .085;
-        const osc = killAudioCtx.createOscillator(), gain = killAudioCtx.createGain();
-        osc.type = shutdown && level < 2 ? 'sawtooth' : 'triangle';
-        osc.frequency.setValueAtTime(freq, t);
-        gain.gain.setValueAtTime(.0001, t);
-        gain.gain.exponentialRampToValueAtTime(.16, t + .015);
-        gain.gain.exponentialRampToValueAtTime(.0001, t + (i === notes.length - 1 ? .42 : .14));
-        osc.connect(gain); gain.connect(killAudioCtx.destination);
-        osc.start(t); osc.stop(t + .45);
-      });
-    } catch (_) {}
-  }
-
-  function unlockAudio() {
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-    preloadVoices();
-    syncMusicForScreen();
-  }
-
-  function playSfx(name, volume = .55) {
-    if (!soundEnabled || !audioUnlocked || !AUDIO_FILES[name]) return;
-    const sound = new Audio(AUDIO_FILES[name]);
-    sound.preload = 'auto';
-    sound.volume = volume;
-    sound.play().catch(() => {});
+    for (let attempt = 0; attempt < 40; attempt++) {
+      let candidate;
+      if (attempt < spawns.length) {
+        candidate = { ...spawns[attempt] };
+      } else {
+        const randRow = Math.floor(Math.random() * 11);
+        const maxCol = Math.max(2, Math.floor(curW / 64) - 2);
+        const randCol = 1.5 + Math.random() * (maxCol - 1.5);
+        candidate = {
+          vx: Math.round(randCol * 64),
+          vy: Math.round((randRow + 0.5) * 64)
+        };
+      }
+      const tooCloseToWall = hitsWall(candidate, TANK_RADIUS + 3, true, wallsToCheck);
+      const tooCloseToTank = existingTanks.some(t => t.tankAlive && distance(t.tankPos, candidate) < 70);
+      if (!tooCloseToWall && !tooCloseToTank) return candidate;
+    }
+    if (spawns.length > 0) return { ...spawns[Math.floor(Math.random() * spawns.length)] };
+    return { vx: 96, vy: 32 };
   }
 
   // Win / lose jingle: gamewinner / gameover for free-for-all (and online), gamewinner2 / gameover2 for the team modes
@@ -814,7 +825,8 @@
         const countdownSecond = Math.max(0, Math.ceil(seconds || 0));
         lastCountdownSecond = countdownSecond;
         $('countdown-banner').hidden = false;
-        $('countdown-banner').textContent = `TRẬN ĐẤU BẮT ĐẦU SAU ${countdownSecond}…`;
+        $('countdown-banner').textContent = `TRẬN ĐẤU BẮT ĐẦU SAU ${Math.max(0, Math.ceil(seconds || 0))}…`;
+        SoundFX.countdown(seconds);
         break;
       }
       case 'SGameSnapshot': {
@@ -849,31 +861,22 @@
       case 'SMatchOver': {
         const values = Array.isArray(data) ? data : [];
         const winner = values[0] || 'Chưa xác định';
-        const scores = Array.isArray(values[1]) ? values[1] : [];
-        const mineTank = latestSnapshot ? findMyTank(latestSnapshot) : null;
-        const mineStats = mineTank ? tankStats(mineTank) : null;
-        const pointBoard = latestSnapshot ? scoreboardEntries(latestSnapshot).map(e => [e.id, e.points]) : [];
-        const onlineWon = winner === username;
-        playEndSfx(onlineWon, .62);
-        showEndSplash(onlineWon ? 'win' : 'lose', () => showPostMatch({
-          title: winner === username ? 'CHIẾN THẮNG' : 'TRẬN ĐẤU KẾT THÚC',
-          summary: `${winner} là người chiến thắng chung cuộc.`,
-          kills: mineStats ? mineStats.kills : 0, score: mineStats ? mineStats.points : 0, map: 'ONLINE',
-          scores: pointBoard.length ? pointBoard : scores
-        }));
-        addFeed(`Chiến thắng chung cuộc: ${winner}`, 'warn'); break;
+        showOverlay('TRẬN ĐẤU KẾT THÚC', `${winner} là người chiến thắng chung cuộc.`, 'VỀ PHÒNG CHỜ', () => { hideOverlay(); if (mode === 'online' && activeRoom) sendMessage('CLeaveRoom'); else { showScreen('lobby'); sendMessage('CListRooms'); } });
+        addFeed(`Chiến thắng chung cuộc: ${winner}`, 'warn');
+        SoundFX.victory();
+        break;
       }
       case 'SKillEvent': {
-        // Current protocol: [killer, victim]. Optional extra fields from a newer backend:
-        // [killer, victim, multiKillLevel (1-5 or "DoubleKill"...), shutdown (bool)].
-        playSfx('explosion', .38 * SFX_MIX.explosion);
-        handleOnlineKillEvent(Array.isArray(data) ? data : []);
+        const pair = Array.isArray(data) ? data : [];
+        addFeed(`${pair[0] || 'Ai đó'} hạ ${pair[1] || 'đối thủ'}!`, 'warn');
+        SoundFX.explosion();
         break;
       }
       case 'SMysteryBoxPickup': {
         const pair = Array.isArray(data) ? data : [];
-        playSfx('pickup', .52);
-        addFeed(`${pair[0] || 'Người chơi'} nhặt hộp: ${weaponName(pair[1])}.`); break;
+        addFeed(`${pair[0] || 'Người chơi'} nhặt hộp: ${weaponName(pair[1])}.`);
+        SoundFX.pickup();
+        break;
       }
       case 'SLeaderboard':
         addFeed('Đã nhận bảng xếp hạng.'); break;
@@ -1183,19 +1186,14 @@
     startOffline(mapId);
   }
 
-  async function startOffline(mapId = TEST_GAME.defaultMapId || 'forest') {
-    unlockAudio();
-    enterGameplayFullscreen();
-    await mapLoadPromise;
-    const chosenMap = trainingMaps.get(mapId);
-    if (!chosenMap) {
-      leaveGameplayFullscreen();
-      showScreen('map');
-      setError('map-error', `Không thể khởi tạo map ${String(mapId).toUpperCase()}. ${mapLoadError || 'Kiểm tra static server.'}`);
-      return;
-    }
+  function startOffline() {
     hideOverlay();
-    hidePauseModal();
+    maze = generateRandomMaze();
+    const enteredName = $('player-name').value.trim();
+    username = enteredName || localStorage.getItem('tankwar-name') || 'TankPilot';
+    displayName = username;
+    $('player-name').value = username;
+    localStorage.setItem('tankwar-name', username);
     closeSocket(false);
     mode = 'offline'; activeRoom = null; isHost = false;
     selectedMapId = mapId;
@@ -1212,91 +1210,25 @@
     statusPill('idle', 'CHẾ ĐỘ OFFLINE');
     updateMatchHeader(latestSnapshot); updateScoreboard(latestSnapshot); updateWeaponPanel(latestSnapshot);
     showScreen('game');
-    addFeed(`Bắt đầu thực hành tại ${chosenMap.label}.`);
-  }
-
-  function getLocalSpawns(map) {
-    const preferred = (map.spawns || []).map(point => ({ ...point }));
-    const fallbacks = [
-      { vx: map.width - 288, vy: 288 }, { vx: 288, vy: map.height - 288 },
-      { vx: map.width - 288, vy: map.height - 288 }
-    ];
-    return preferred.concat(fallbacks).filter((point, index, points) =>
-      !points.slice(0, index).some(other => other.vx === point.vx && other.vy === point.vy)
-    ).slice(0, 4);
+    addFeed('Bắt đầu chế độ thực hành offline với mê cung mới!');
   }
 
   function createLocalGame(name) {
-    const teamSize = botSettings.teamSize >= 2 ? Math.min(5, botSettings.teamSize) : 0;
-    const team = teamSize >= 2;
-    // Team mode: you + (teamSize - 1) allies against teamSize enemies. Tank 0 is you, then allies, then enemies.
-    const botCount = team ? teamSize * 2 - 1 : Math.max(1, Math.min(MAX_BOTS, botSettings.bots));
-    const colors = [selectedTankColor].concat(['TankRed', 'TankBlue', 'TankGreen', 'TankYellow'].filter(color => color !== selectedTankColor));
-    const teamOf = i => team ? (i < teamSize ? 0 : 1) : -1;
-    const teamColor = i => teamOf(i) === 0 ? 'TankBlue' : 'TankRed';
-    const configuredNames = Array.from(TEST_GAME.localBotNames || []);
-    const names = [name].concat(Array.from({ length: botCount }, (_, i) => configuredNames[i] || `CPU-${i + 1}`));
-    const spawns = team ? teamBaseSpawns(teamSize) : localSpawnPoints(names.length);
-    const tanks = names.map((n, i) => ({
-      tankId: n,
-      tankPos: { ...spawns[i] }, tankVel: { vx: 0, vy: 0 }, tankBodyAngle: 0,
-      tankTurretAngle: Math.PI, tankColor: team ? teamColor(i) : colors[i % colors.length], team: teamOf(i),
-      tankWeapon: { wsCurrentWeapon: 'NormalBullet', wsBuffTimeLeft: 0, wsCooldownState: 'Ready' },
-      tankAlive: true, tankScore: 0, tankKills: 0, tankDeaths: 0, tankAssists: 0, tankPoints: 0,
-      tankKillStreak: 0, tankRespawnTimer: 0, tankInvulnerabilityLeft: 0,
-      tankAmmo: RULES.magazineSize, tankMaxAmmo: RULES.magazineSize, tankReloadTimer: 0,
-      _spawn: { ...spawns[i] }, _survival: 0, _multi: { count: 0, last: -999 },
-      _bot: i > 0, _cooldown: .8 + i * .45, _dirTimer: 0, _direction: Math.random() * Math.PI * 2,
-      _prev: { ...spawns[i] }, _v: { vx: 0, vy: 0 }, _think: Math.random() * .3, _path: [], _wp: null, _pathAge: 99, _roam: null,
-      _sees: false, _seen: 0, _strafe: Math.random() < .5 ? 1 : -1, _strafeT: 0, _dodge: null, _dodgeT: 0, _dodgeCheck: 0
-    }));
-    const view = localViewSize();
-    camera.x = clamp(spawns[0].vx - view.width / 2, 0, localMap.width - view.width);
-    camera.y = clamp(spawns[0].vy - view.height / 2, 0, localMap.height - view.height);
-    return {
-      name, tanks, bullets: [], boxes: [], lasers: [], time: 0, boxTimer: 10, startCountdown: 5,
-      fireCooldown: 0, gameOver: false, spectatorTankId: '', difficulty: botSettings.difficulty,
-      // Team mode state: best-of rounds, every round a death match without respawn.
-      team, teamSize, rounds: botSettings.teamRounds, round: 1, wins: [0, 0], roundClock: 0,
-      roundOver: false, roundEndTimer: 0, awaitingNext: false, roundResult: null, history: [], teamSeen: [null, null]
-    };
-  }
-
-  // Team mode spawns (like a MOBA base): each team starts packed together in its own corner of the map,
-  // the two bases being at opposite ends. Tank 0 (you) is first, then your allies, then the enemy team.
-  function teamBaseSpawns(size) {
-    const points = getLocalSpawns(localMap);
-    const baseA = points[0];
-    const baseB = points.slice(1).reduce((far, p) => distance(p, baseA) > distance(far, baseA) ? p : far, points[1] || baseA);
-    return clusterSpawns(baseA, size).concat(clusterSpawns(baseB, size));
-  }
-
-  // `count` open, well-spaced points around an anchor (the anchor itself first).
-  function clusterSpawns(anchor, count) {
-    const step = 170, offsets = [];
-    for (let ix = -3; ix <= 3; ix++) for (let iy = -3; iy <= 3; iy++) offsets.push({ vx: ix * step, vy: iy * step });
-    offsets.sort((p, q) => Math.hypot(p.vx, p.vy) - Math.hypot(q.vx, q.vy));
-    const picked = [];
-    offsets.forEach(o => {
-      if (picked.length >= count) return;
-      const pos = { vx: anchor.vx + o.vx, vy: anchor.vy + o.vy };
-      if (pos.vx < 120 || pos.vy < 120 || pos.vx > localMap.width - 120 || pos.vy > localMap.height - 120) return;
-      if (collidesLocalMap(pos, LOCAL_TANK_RADIUS + 10)) return;
-      picked.push(pos);
+    const colors = ['TankRed','TankBlue','TankGreen','TankYellow'];
+    const names = [name, 'CPU-ALPHA', 'CPU-BRAVO', 'CPU-DELTA'];
+    const tanks = [];
+    names.forEach((n, i) => {
+      const sp = getRandomSpawnPoint(maze, tanks);
+      tanks.push({
+        tankId: n,
+        tankPos: { ...sp }, tankVel: { vx: 0, vy: 0 }, tankBodyAngle: 0,
+        tankTurretAngle: Math.PI, tankColor: colors[i],
+        tankWeapon: { wsCurrentWeapon: 'NormalBullet', wsBuffTimeLeft: 0, wsCooldownState: 'Ready' },
+        tankAlive: true, tankScore: 0, tankKills: 0,
+        _bot: i > 0, _cooldown: .8 + i * .45, _respawn: 0, _dirTimer: 0, _direction: Math.random() * Math.PI * 2
+      });
     });
-    while (picked.length < count) picked.push({ ...anchor });   // very cramped map: stack on the anchor
-    return picked;
-  }
-
-  // The snapshot exposes the same Tank fields the Haskell server sends, so the HUD code is shared.
-  function publicTank(t) {
-    return {
-      tankId: t.tankId, tankPos: t.tankPos, tankVel: t.tankVel, tankBodyAngle: t.tankBodyAngle, tankTurretAngle: t.tankTurretAngle,
-      tankColor: t.tankColor, tankWeapon: t.tankWeapon, tankAlive: t.tankAlive, tankScore: t.tankScore,
-      tankKills: t.tankKills, tankDeaths: t.tankDeaths, tankAssists: t.tankAssists, tankPoints: t.tankPoints,
-      tankKillStreak: t.tankKillStreak, tankRespawnTimer: t.tankRespawnTimer, tankInvulnerabilityLeft: t.tankInvulnerabilityLeft, tankTeam: t.team,
-      tankAmmo: t.tankAmmo, tankMaxAmmo: t.tankMaxAmmo, tankReloadTimer: t.tankReloadTimer
-    };
+    return { name, tanks, bullets: [], boxes: [], lasers: [], time: 0, boxTimer: 10, fireCooldown: 0, lives: 5, score: 0, gameOver: false, kills: 0, wave: 1 };
   }
 
   function localSnapshot() {
@@ -1704,305 +1636,188 @@
   }
 
   function updateOffline(dt) {
-    if (!localGame || localGame.gameOver || isPaused || localGame.awaitingNext) return;
-    // Pre-match countdown: nobody moves, shoots or scores until it reaches zero.
-    if (localGame.startCountdown > 0) {
-      localGame.startCountdown = Math.max(0, localGame.startCountdown - dt);
-      input.fire = false; input.reloadRequest = false;
-      setMovementSound(false);
-      if (localGame.startCountdown > 0) updateCountdownOverlay(localGame.startCountdown); else removeCountdownOverlay();
-      return;
-    }
-    const g = localGame; g.time += dt; g.fireCooldown = Math.max(0, g.fireCooldown - dt);
-    if (!g.team && g.time >= botSettings.matchSeconds) { finishLocalMatch(); return; }
-    if (g.team && !g.roundOver) g.roundClock += dt;
+    if (!localGame || localGame.gameOver || isPaused) return;
+    const g = localGame; g.time += dt; g.fireCooldown = Math.max(0,g.fireCooldown-dt);
     const player = g.tanks[0];
     const weapon = player.tankWeapon;
-    g.tanks.forEach(tank => tickLocalTank(tank, dt));
-    if (input.reloadRequest) { input.reloadRequest = false; startLocalReload(player); }
-    if (player.tankAlive) {
-      const dx = (input.right ? 1 : 0) - (input.left ? 1 : 0), dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-      if (dx || dy) {
-        const len = Math.hypot(dx, dy);
-        const mx = dx / len * 150 * LOCAL_SPEED_SCALE * dt, my = dy / len * 150 * LOCAL_SPEED_SCALE * dt;
-        moveLocalTank(player, mx, my);
-        player.tankBodyAngle = Math.atan2(dy, dx);
-      }
-      setMovementSound(!!(dx || dy));
-      updateLocalCamera(player.tankPos, dt);
-      const pointer = screenToLocalWorld(input.mouseX, input.mouseY);
-      player.tankTurretAngle = Math.atan2(pointer.vy - player.tankPos.vy, pointer.vx - player.tankPos.vx);
-    } else {
-      input.fire = false;
-      setMovementSound(false);
-      const killer = (g.team ? getOfflineCameraTank() : null)
-        || g.tanks.find(tank => tank.tankId === g.spectatorTankId && tank.tankAlive)
-        || g.tanks.slice(1).find(tank => tank.tankAlive);
-      if (killer) updateLocalCamera(killer.tankPos, dt);
-    }
-    weapon.wsBuffTimeLeft = Math.max(0, weapon.wsBuffTimeLeft - dt);
-    if (weapon.wsBuffTimeLeft <= 0 && weapon.wsCurrentWeapon !== 'NormalBullet') weapon.wsCurrentWeapon = 'NormalBullet';
-    if (player.tankAlive && input.fire && g.fireCooldown <= 0 && player.tankReloadTimer <= 0 && player.tankAmmo > 0) {
-      localShoot(player, player.tankTurretAngle, weapon.wsCurrentWeapon);
-      g.fireCooldown = weapon.wsCurrentWeapon === 'NormalBullet' ? 0.5 : 1.0;
-      player.tankAmmo--;
-      if (player.tankAmmo === 0) startLocalReload(player);
+    weapon.wsBuffTimeLeft=Math.max(0,weapon.wsBuffTimeLeft-dt);
+    if (weapon.wsBuffTimeLeft<=0 && weapon.wsCurrentWeapon!=='NormalBullet') weapon.wsCurrentWeapon='NormalBullet';
+    if (input.fire && g.fireCooldown<=0) {
+      localShoot(player,player.tankTurretAngle,weapon.wsCurrentWeapon);
+      g.fireCooldown=weapon.wsCurrentWeapon==='NormalBullet'?0.5:1.0;
     }
     weapon.wsCooldownState = g.fireCooldown > 0 || player.tankReloadTimer > 0
       ? { tag: 'Reloading', contents: Math.max(g.fireCooldown, player.tankReloadTimer) }
       : 'Ready';
 
     g.boxTimer -= dt;
-    if (g.boxTimer <= 0 && g.boxes.length === 0) {
-      const pt = pickOpenLocalPoint(26);
-      g.boxes.push({ pos: { ...pt }, life: 12 }); g.boxTimer = 22 + Math.random() * 8;
+    if (g.boxTimer<=0 && g.boxes.length===0) {
+      const pt=maze.mazeBoxSpawnPts[Math.floor(Math.random()*maze.mazeBoxSpawnPts.length)];
+      g.boxes.push({pos:{...pt},life:12}); g.boxTimer=22+Math.random()*8;
     }
-    g.boxes.forEach(box => box.life -= dt); g.boxes = g.boxes.filter(b => b.life > 0);
-    if (player.tankAlive && g.boxes.some(b => distance(b.pos, player.tankPos) < LOCAL_TANK_RADIUS + 28)) {
-      g.boxes = [];
-      const special = ['ShotgunBullet', 'LaserBullet', 'WallPiercingBullet', 'GatlingBullet'][Math.floor(Math.random() * 4)];
-      weapon.wsCurrentWeapon = special; weapon.wsBuffTimeLeft = 15;
-      playSfx('pickup', .58);
+    g.boxes.forEach(box=>box.life-=dt); g.boxes=g.boxes.filter(b=>b.life>0);
+    if (g.boxes.some(b=>distance(b.pos,player.tankPos)<23)) {
+      g.boxes=[]; const special=['ShotgunBullet','LaserBullet','WallPiercingBullet','GatlingBullet'][Math.floor(Math.random()*4)];
+      weapon.wsCurrentWeapon=special; weapon.wsBuffTimeLeft=15;
+      SoundFX.pickup();
       addFeed(`Nhặt Mystery Box: ${weaponName(special)} trong 15 giây!`);
     }
 
-    g.tanks.slice(1).forEach(bot => { if (bot.tankAlive) updateLocalBot(bot, dt); });
+    g.tanks.slice(1).forEach((bot)=>{
+      if (!bot.tankAlive) {
+        bot._respawn -= dt;
+        if (bot._respawn <= 0) {
+          bot.tankPos = getRandomSpawnPoint(maze, g.tanks);
+          bot.tankAlive = true;
+          bot._cooldown = 1.2;
+        }
+        return;
+      }
+      bot._cooldown-=dt; bot._dirTimer-=dt;
+      const toX=player.tankPos.vx-bot.tankPos.vx, toY=player.tankPos.vy-bot.tankPos.vy;
+      const dist=Math.hypot(toX,toY)||1;
+      const primary={vx:bot.tankPos.vx+toX/dist*78*dt,vy:bot.tankPos.vy+toY/dist*78*dt};
+      const altX={vx:primary.vx,vy:bot.tankPos.vy}; const altY={vx:bot.tankPos.vx,vy:primary.vy};
+      if (!hitsWall(primary,TANK_RADIUS,true)) bot.tankPos=primary;
+      else if (!hitsWall(altX,TANK_RADIUS,true)) bot.tankPos=altX;
+      else if (!hitsWall(altY,TANK_RADIUS,true)) bot.tankPos=altY;
+      else if (bot._dirTimer<=0) {bot._direction=Math.random()*Math.PI*2;bot._dirTimer=.8+Math.random()*1.5;}
+      bot.tankBodyAngle=Math.atan2(toY,toX); bot.tankTurretAngle=bot.tankBodyAngle;
+      if (bot._cooldown<=0 && dist<530) {localShoot(bot,Math.atan2(toY,toX),'NormalBullet');bot._cooldown=1.6+Math.random()*.8;}
+    });
 
-    g.bullets.forEach(b => {
-      b.life -= dt; const nx = b.pos.vx + b.vel.vx * dt, ny = b.pos.vy + b.vel.vy * dt;
-      b.travelled = (b.travelled || 0) + Math.hypot(b.vel.vx * dt, b.vel.vy * dt);   // path length incl. bounces
-      if (nx < 12 || nx > localMap.width - 12) { b.vel.vx *= -1; b.bounces++; b.pos.vx = clamp(nx, 12, localMap.width - 12); } else b.pos.vx = nx;
-      if (ny < 12 || ny > localMap.height - 12) { b.vel.vy *= -1; b.bounces++; b.pos.vy = clamp(ny, 12, localMap.height - 12); } else b.pos.vy = ny;
-      if (b.type !== 'WallPiercingBullet' && collidesLocalMap(b.pos, 12)) b.life = 0;
-      if (b.travelled >= RULES.bulletRangeMap * LOCAL_WORLD_SIZE) b.life = 0;   // out of range
-      if (b.life <= 0) return;
-      const ownerTank = g.tanks.find(t => t.tankId === b.owner);
-      for (const tank of g.tanks) {
-        // A shot never hurts its owner, and passes through a tank still in its post-respawn invulnerability window.
-        if (tank.tankId === b.owner || !tank.tankAlive || tank.tankInvulnerabilityLeft > 0) continue;
-        // Team mode: no friendly fire, and nobody can be hit once the round is already decided.
-        if (g.team && (g.roundOver || (ownerTank && tank.team === ownerTank.team))) continue;
-        if (distance(tank.tankPos, b.pos) < LOCAL_TANK_RADIUS + 14) {
-          b.life = 0;
-          killLocalTank(g.tanks.find(t => t.tankId === b.owner) || tank, tank);
-          break;
+    const curW = WORLD_W;
+    const curH = WORLD_H;
+    const internalWalls = (maze && maze.mazeWalls ? maze.mazeWalls : []).slice(4);
+    g.bullets.forEach(b=>{
+      b.life-=dt;
+      const oldX=b.pos.vx, oldY=b.pos.vy;
+      const nextX=oldX+b.vel.vx*dt, nextY=oldY+b.vel.vy*dt;
+
+      // Nảy 4 cạnh biên (giữ đạn luôn ở trong chiến trường)
+      if (nextX<6) {b.vel.vx=Math.abs(b.vel.vx);b.pos.vx=6;b.bounces++;SoundFX.bounce();}
+      else if (nextX>curW-6) {b.vel.vx=-Math.abs(b.vel.vx);b.pos.vx=curW-6;b.bounces++;SoundFX.bounce();}
+      else {b.pos.vx=nextX;}
+
+      if (nextY<6) {b.vel.vy=Math.abs(b.vel.vy);b.pos.vy=6;b.bounces++;SoundFX.bounce();}
+      else if (nextY>curH-6) {b.vel.vy=-Math.abs(b.vel.vy);b.pos.vy=curH-6;b.bounces++;SoundFX.bounce();}
+      else {b.pos.vy=nextY;}
+
+      // Nảy tường nội bộ (Continuous Collision Detection - chống đạn xuyên tường)
+      if (b.type!=='WallPiercingBullet') {
+        const segStart={vx:oldX,vy:oldY}, segEnd={vx:b.pos.vx,vy:b.pos.vy};
+        for (const w of internalWalls) {
+          const hit=segmentIntersection(segStart,segEnd,w.wallStart,w.wallEnd);
+          const closeDist=pointWallDistance(b.pos,w);
+          if (hit || closeDist<7) {
+            const isHoriz=Math.abs(w.wallEnd.vx-w.wallStart.vx)>=Math.abs(w.wallEnd.vy-w.wallStart.vy);
+            if (isHoriz) {
+              b.vel.vy*=-1;
+              b.pos.vy=oldY<w.wallStart.vy?w.wallStart.vy-5:w.wallStart.vy+5;
+            } else {
+              b.vel.vx*=-1;
+              b.pos.vx=oldX<w.wallStart.vx?w.wallStart.vx-5:w.wallStart.vx+5;
+            }
+            b.bounces++;
+            SoundFX.bounce();
+            break;
+          }
         }
       }
-    });
-    g.bullets = g.bullets.filter(b => b.life > 0 && b.bounces <= 4);
-    if (g.team) updateTeamRound(dt);
-    if (!g.gameOver && player.tankKills >= TEST_GAME.winKills) {
-      g.gameOver = true;
-      setMovementSound(false);
-      stopShotSounds();
-      playEndSfx(true);
-      showEndSplash('win', () => showPostMatch({ title: 'NHIỆM VỤ HOÀN TẤT', summary: `Bạn đã hạ ${player.tankKills} bot và ghi ${player.tankPoints} điểm.`, kills: player.tankKills, score: player.tankPoints, map: localMap.label, scores: g.tanks.map(t => [t.tankId, t.tankPoints]) }));
-    }
-  }
-
-  // ---- Team mode rounds (2v2 / 3v3 / 4v4 / 5v5): death match per round, no respawn until the next round ----
-  function updateTeamRound(dt) {
-    const g = localGame;
-    if (!g || !g.team || g.gameOver) return;
-    if (!g.roundOver) {
-      const alive = [0, 1].map(team => g.tanks.filter(t => t.team === team && t.tankAlive).length);
-      if (alive[0] === 0 || alive[1] === 0) endTeamRound(alive[0] === alive[1] ? -1 : (alive[0] ? 0 : 1), 'wipe');
-      else if (g.roundClock >= botSettings.teamRoundSeconds) endTeamRound(alive[0] === alive[1] ? -1 : (alive[0] > alive[1] ? 0 : 1), 'time');
-      return;
-    }
-    g.roundEndTimer -= dt;
-    // Show the round verdict as a banner (not a blocking screen) shortly after the last kill.
-    // After an ACE the verdict waits 2 seconds longer, so the ACE banner and voice are not cut off.
-    if (!g.verdictShown && g.roundResult && g.roundEndTimer <= RULES.teamRoundEndDelay - (g.ace ? 0 : 1) && g.roundEndTimer > .4) {
-      g.verdictShown = true;
-      const my = g.tanks[0].team, w = g.roundResult.winner;
-      showKillBanner(g.roundResult.title, g.roundResult.text, w < 0 ? 'round-draw' : w === my ? 'round-win' : 'round-lose', 'ROUND UPDATE', Math.max(800, g.roundEndTimer * 1000));
-    }
-    if (g.roundEndTimer > 0) return;
-    // A team that wins more than half of the rounds has already won the match: no need to play on.
-    const need = Math.floor(g.rounds / 2) + 1;
-    if (g.wins[0] >= need || g.wins[1] >= need || g.round >= g.rounds) { finishTeamMatch(); return; }
-    // Next round starts by itself: no button to press.
-    startNextTeamRound();
-  }
-
-  function endTeamRound(winner, reason) {
-    const g = localGame;
-    g.roundOver = true; g.verdictShown = false;
-    g.roundEndTimer = RULES.teamRoundEndDelay;
-    if (winner >= 0) g.wins[winner]++;
-    g.history.push(winner);
-    const my = g.tanks[0].team;
-    // ACE: one team wiped out the whole other team (the round ended by elimination, not by the clock).
-    // Your team -> ace.mp3 (gold banner); the enemy team -> enemy_ace.mp3 (red banner).
-    g.ace = reason === 'wipe' && winner >= 0;
-    if (g.ace) {
-      g.roundEndTimer += 2;
-      resetAnnouncements();   // the ACE takes over from any kill announcement still queued
-      if (winner === my) {
-        showKillBanner('ACE', 'Đội bạn đã quét sạch phe địch!', 'ace', 'TEAM WIPE', 2300);
-        playVoice('ace', .9, () => playKillSting(5));
-      } else {
-        showKillBanner('ACE', 'Phe địch đã quét sạch đội bạn!', 'ace enemy', 'TEAM WIPE', 2300);
-        playVoice('enemyAce', .9, () => playKillSting(1, true));
+      if (b.owner===player.tankId) {
+        for (const bot of g.tanks.slice(1)) if (bot.tankAlive && distance(bot.tankPos,b.pos)<TANK_RADIUS+5) {
+          bot.tankAlive=false;bot._respawn=2.3;player.tankKills++;player.tankScore++;g.kills++;g.score+=100;b.life=0;
+          SoundFX.explosion();
+          addFeed(`${player.tankId} hạ ${bot.tankId}!`,'warn');break;
+        }
+      } else if (player.tankAlive && distance(player.tankPos,b.pos)<TANK_RADIUS+5) {
+        b.life=0;g.lives--;
+        SoundFX.explosion();
+        addFeed(`${b.owner} bắn trúng bạn. Còn ${g.lives} mạng!`,'warn');
+        if(g.lives<=0){g.gameOver=true;showOverlay('XE TĂNG BỊ HẠ','Bạn đã hết mạng. Hãy thử lại và dùng tường để che chắn.','CHƠI LẠI',()=>{hideOverlay();startOffline();});}
+        else {player.tankPos=getRandomSpawnPoint(maze, g.tanks);}
       }
-    }
-    const verdict = winner < 0 ? 'HÒA VÁN' : winner === my ? 'ROUND WON' : 'ROUND LOSS';
-    const why = reason === 'time'
-      ? 'Hết giờ, ' + (winner < 0 ? 'số người sống bằng nhau.' : 'đội còn nhiều người sống hơn thắng.')
-      : (winner < 0 ? 'Hai đội cùng bị loại.' : winner === my ? 'Phe địch đã bị hạ.' : 'Phe ta đã bị hạ.');
-    g.roundResult = { winner, title: winner < 0 ? `${verdict} ${g.round}/${g.rounds}` : verdict, text: `${why} Tỷ số: ĐỘI BẠN ${g.wins[my]} – ${g.wins[1 - my]} ĐỊCH` };
-    addFeed(`${verdict} ${g.round}/${g.rounds} · ${g.wins[my]} – ${g.wins[1 - my]}`, 'warn');
-  }
-
-  function startNextTeamRound() {
-    const g = localGame; if (!g || !g.team || g.gameOver) return;
-    g.round++;
-    g.roundOver = false; g.awaitingNext = false; g.roundResult = null; g.roundClock = 0;
-    g.bullets = []; g.boxes = []; g.lasers = []; g.boxTimer = 10; g.fireCooldown = 0; g.spectatorTankId = '';
-    g.teamSeen = [null, null];
-    input.fire = false;
-    // Every round is a fresh death match: new First Blood, no leftover streaks / multi-kills / announcements.
-    resetAnnouncements();
-    firstBloodDone = false;
-    killTracker.clear(); streakTracker.clear(); lastKnownStreak.clear();
-    lastKillerOfMe = '';
-    const feed = $('kill-feed'); if (feed) feed.innerHTML = '';
-    const banner = $('kill-banner'); if (banner) banner.hidden = true;
-    clearTimeout(bannerTimer);
-    g.tanks.forEach(tank => {
-      tank.tankKillStreak = 0; tank._multi = { count: 0, last: -999 };
-      tank.tankWeapon.wsCurrentWeapon = 'NormalBullet'; tank.tankWeapon.wsBuffTimeLeft = 0;
-      respawnLocalTank(tank);
     });
-    addFeed(`Ván ${g.round}/${g.rounds} bắt đầu. Bất tử ${RULES.invulnerableSeconds} giây.`);
-    // Match point: some team needs just one more round win to take the match.
-    const need = Math.floor(g.rounds / 2) + 1, my = g.tanks[0].team;
-    const atPoint = need >= 2 ? [0, 1].filter(t => g.wins[t] === need - 1) : [];
-    if (atPoint.length) {
-      const who = atPoint.length === 2 ? 'Cả hai đội chỉ còn cách chiến thắng 1 ván' : atPoint[0] === my ? 'Đội bạn chỉ còn cách chiến thắng 1 ván' : 'Đội địch chỉ còn cách chiến thắng 1 ván';
-      // matchpoint.mp3 is now the round's music (not a short voice line), so only the banner is queued here.
-      matchPointTrack = pickMatchPointTrack(); matchPointActive = !!matchPointTrack;
-      queueAnnouncement({ banner: ['MATCH POINT', who, 'matchpoint', `VÁN ${g.round}/${g.rounds}`, 3200] });
-      runAnnouncements();
-    } else { matchPointActive = false; showKillBanner(`VÁN ${g.round}/${g.rounds}`, 'Bắt đầu!', 'round-start', 'ROUND START', 2200); }
-    syncMusicForScreen();
-  }
-
-  function finishTeamMatch() {
-    const g = localGame; if (!g || g.gameOver) return;
-    g.gameOver = true;
-    matchPointActive = false;
-    input.fire = false;
-    setMovementSound(false);
-    stopShotSounds();
-    const me = g.tanks[0], my = me.team;
-    const mine = g.wins[my], theirs = g.wins[1 - my];
-    const outcome = mine > theirs ? 'win' : mine < theirs ? 'lose' : 'draw';
-    playEndSfx(outcome === 'win', .66, true);
-    const ranking = g.tanks.slice().sort((a, b) => b.tankPoints - a.tankPoints || b.tankKills - a.tankKills || a.tankDeaths - b.tankDeaths);
-    showEndSplash(outcome, () => showPostMatch({
-      title: outcome === 'win' ? 'CHIẾN THẮNG' : outcome === 'lose' ? 'THẤT BẠI' : 'HÒA',
-      summary: `${g.teamSize}V${g.teamSize} · Sau ${g.history.length}/${g.rounds} ván${g.history.length < g.rounds ? ' (đã đủ số ván thắng nên kết thúc sớm)' : ''}, đội bạn thắng ${mine} ván, đội địch thắng ${theirs} ván.`,
-      kills: me.tankKills, score: me.tankPoints, map: localMap.label,
-      scores: ranking.map(t => [`${t.tankId} · ${t.team === my ? 'ĐỒNG ĐỘI' : 'ĐỊCH'}`, t.tankPoints]),
-      players: matchPlayers(g), report: { team: true, myTeam: my, wins: g.wins, history: g.history, outcome }
-    }));
-  }
-
-  // Round / wins / survivors box under the clock (team mode only).
-  function updateRoundScore() {
-    const box = $('round-score'); if (!box) return;
-    const g = mode === 'offline' ? localGame : null;
-    if (!g || !g.team) { if (!box.hidden) box.hidden = true; return; }
-    if (box.hidden) box.hidden = false;
-    const my = g.tanks[0].team;
-    const aliveOf = team => g.tanks.filter(t => t.team === team && t.tankAlive).length;
-    setText('round-label', `VÁN ${Math.min(g.round, g.rounds)}/${g.rounds}`);
-    setText('round-wins-me', g.wins[my]);
-    setText('round-wins-enemy', g.wins[1 - my]);
-    setText('round-alive', `SỐNG ${aliveOf(my)} · ${aliveOf(1 - my)}`);
-  }
-
-  // Time is up: the tank with the most points wins (ties: more kills, then fewer deaths).
-  function finishLocalMatch() {
-    const g = localGame; if (!g || g.gameOver) return;
-    g.gameOver = true;
-    input.fire = false;
-    setMovementSound(false);
-    stopShotSounds();
-    const ranking = g.tanks.slice().sort((a, b) => b.tankPoints - a.tankPoints || b.tankKills - a.tankKills || a.tankDeaths - b.tankDeaths);
-    const winner = ranking[0], me = g.tanks[0];
-    const won = winner === me;
-    playEndSfx(won);
-    showEndSplash(won ? 'win' : 'lose', () => showPostMatch({
-      title: won ? 'CHIẾN THẮNG' : 'HẾT GIỜ',
-      summary: won ? `Hết 5 phút, bạn dẫn đầu với ${me.tankPoints} điểm.` : `Hết 5 phút. ${winner.tankId} thắng với ${winner.tankPoints} điểm, bạn có ${me.tankPoints} điểm.`,
-      kills: me.tankKills, score: me.tankPoints, map: localMap.label,
-      scores: ranking.map(t => [t.tankId, t.tankPoints]),
-      players: matchPlayers(g), report: { team: false, outcome: won ? 'win' : 'lose' }
-    }));
+    g.bullets=g.bullets.filter(b=>b.life>0&&b.bounces<=5);
+    if (g.tanks.slice(1).every(t=>!t.tankAlive)) g.wave += dt;
   }
 
   function localShoot(tank, angle, type) {
     if (!localGame) return;
-    const isPlayer = tank.tankId === localGame.name;
-    const volume = (isPlayer ? .43 : .16) * SFX_MIX.shot;
-    // Laser / gatling / piercing use a single restartable voice so they never stack or loop.
-    if (type === 'LaserBullet') playShot('laserShot', volume);
-    else if (type === 'GatlingBullet') playShot('gatlingShot', volume);
-    else if (type === 'WallPiercingBullet') playShot('piercingShot', volume);
-    else playSfx('normalShot', volume);
-    const muzzleOffset = LOCAL_TANK_SIZE * .44 * Number(TEST_GAME.tankRenderScale || .5);
-    const origin = { vx: tank.tankPos.vx + Math.cos(angle) * muzzleOffset, vy: tank.tankPos.vy + Math.sin(angle) * muzzleOffset };
-    const add = (a, speed = 390) => localGame.bullets.push({ pos: { ...origin }, vel: { vx: Math.cos(a) * speed * LOCAL_SPEED_SCALE, vy: Math.sin(a) * speed * LOCAL_SPEED_SCALE }, type, owner: tank.tankId, life: 3, bounces: 0, travelled: 0 });
-    if (type === 'ShotgunBullet') { add(angle - .22, 340); add(angle, 365); add(angle + .22, 340); }
-    else if (type === 'GatlingBullet') { add(angle, 410); add(angle + .04, 410); }
+    SoundFX.shoot(type);
+    const dir = { vx: Math.cos(angle), vy: Math.sin(angle) };
+    const pStart = { ...tank.tankPos };
+    const maxOffset = 18;
+    const pEnd = { vx: pStart.vx + dir.vx * maxOffset, vy: pStart.vy + dir.vy * maxOffset };
+
+    // Kiểm tra an toàn: nếu xe tăng đứng tì sát tường, chặn đạn không spawn qua bên kia tường
+    const allWalls = (maze && maze.mazeWalls) ? maze.mazeWalls : [];
+    let earliestHit = null;
+    let hitWall = null;
+
+    for (const w of allWalls) {
+      const hit = segmentIntersection(pStart, pEnd, w.wallStart, w.wallEnd);
+      if (hit && (!earliestHit || hit.t < earliestHit.t)) {
+        earliestHit = hit;
+        hitWall = w;
+      }
+    }
+
+    let origin = pEnd;
+    let initialBounced = false;
+    let initialVelScale = { vx: 1, vy: 1 };
+
+    if (earliestHit && hitWall) {
+      const safeT = Math.max(0.05, earliestHit.t - 0.15);
+      origin = {
+        vx: pStart.vx + dir.vx * maxOffset * safeT,
+        vy: pStart.vy + dir.vy * maxOffset * safeT
+      };
+      if (type !== 'WallPiercingBullet') {
+        const isHoriz = Math.abs(hitWall.wallEnd.vx - hitWall.wallStart.vx) >= Math.abs(hitWall.wallEnd.vy - hitWall.wallStart.vy);
+        if (isHoriz) initialVelScale.vy = -1;
+        else initialVelScale.vx = -1;
+        initialBounced = true;
+        SoundFX.bounce();
+      }
+    }
+
+    const add = (a, speed = 390) => {
+      const vx = Math.cos(a) * speed * initialVelScale.vx;
+      const vy = Math.sin(a) * speed * initialVelScale.vy;
+      localGame.bullets.push({
+        pos: { ...origin },
+        vel: { vx, vy },
+        type,
+        owner: tank.tankId,
+        life: 4,
+        bounces: initialBounced ? 1 : 0
+      });
+    };
+
+    if (type === 'ShotgunBullet') { add(angle - 0.22, 340); add(angle, 365); add(angle + 0.22, 340); }
+    else if (type === 'GatlingBullet') { add(angle, 410); add(angle + 0.04, 410); }
     else if (type === 'LaserBullet') { add(angle, 570); }
     else if (type === 'WallPiercingBullet') { add(angle, 350); }
     else add(angle, 400);
   }
 
-  // Moves in small steps and pushes the tank back out of any wall it touches, so it slides along walls and corners
-  // instead of sticking (and a tank that ends up embedded in a wall is freed on its next move).
-  function moveLocalTank(tank, deltaX, deltaY) {
-    const pos = tank.tankPos, r = LOCAL_TANK_RADIUS;
-    const steps = Math.max(1, Math.ceil(Math.hypot(deltaX, deltaY) / 8));
-    for (let i = 0; i < steps; i++) {
-      pos.vx += deltaX / steps; pos.vy += deltaY / steps;
-      pushOutOfLocalMap(pos, r);
+  function segmentIntersection(p1, p2, p3, p4) {
+    const d = (p2.vx - p1.vx) * (p4.vy - p3.vy) - (p2.vy - p1.vy) * (p4.vx - p3.vx);
+    if (Math.abs(d) < 1e-7) return null;
+    const t = ((p3.vx - p1.vx) * (p4.vy - p3.vy) - (p3.vy - p1.vy) * (p4.vx - p3.vx)) / d;
+    const u = ((p3.vx - p1.vx) * (p2.vy - p1.vy) - (p3.vy - p1.vy) * (p2.vx - p1.vx)) / d;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+      return { t, pt: { vx: p1.vx + t * (p2.vx - p1.vx), vy: p1.vy + t * (p2.vy - p1.vy) } };
     }
+    return null;
   }
 
-  function pushOutOfLocalMap(pos, radius) {
-    for (let pass = 0; pass < 4; pass++) {
-      let moved = false;
-      const cx = clamp(pos.vx, radius, localMap.width - radius), cy = clamp(pos.vy, radius, localMap.height - radius);
-      if (cx !== pos.vx || cy !== pos.vy) { pos.vx = cx; pos.vy = cy; moved = true; }
-      for (const rect of localMap.collisionRects) {
-        const nx = clamp(pos.vx, rect.x, rect.x + rect.width), ny = clamp(pos.vy, rect.y, rect.y + rect.height);
-        const dx = pos.vx - nx, dy = pos.vy - ny, d2 = dx * dx + dy * dy;
-        if (d2 >= radius * radius) continue;
-        moved = true;
-        if (d2 > 1e-6) {
-          const d = Math.sqrt(d2), k = (radius - d) / d;
-          pos.vx += dx * k; pos.vy += dy * k;
-        } else {
-          // The centre is inside the wall: leave through the nearest side.
-          const exits = [
-            [pos.vx - rect.x, -1, 0], [rect.x + rect.width - pos.vx, 1, 0],
-            [pos.vy - rect.y, 0, -1], [rect.y + rect.height - pos.vy, 0, 1]
-          ].sort((a, b) => a[0] - b[0])[0];
-          pos.vx += exits[1] * (exits[0] + radius); pos.vy += exits[2] * (exits[0] + radius);
-        }
-      }
-      if (!moved) break;
-    }
-  }
-
-  function collidesLocalMap(pos, radius) {
-    if (!localMap || pos.vx < radius || pos.vx > localMap.width - radius || pos.vy < radius || pos.vy > localMap.height - radius) return true;
-    return localMap.collisionRects.some(rect => circleIntersectsRect(pos, radius, rect));
+  function hitsWall(pos, radius, includeInner, customWalls) {
+    if (pos.vx < radius || pos.vx > WORLD_W - radius || pos.vy < radius || pos.vy > WORLD_H - radius) return true;
+    const allW = customWalls || (maze && maze.mazeWalls ? maze.mazeWalls : []);
+    const walls = includeInner ? allW.slice(4) : [];
+    return walls.some(w => pointWallDistance(pos, w) < radius + 3);
   }
 
   function circleIntersectsRect(pos, radius, rect) {
@@ -2076,230 +1891,55 @@
   function stopRenderLoop() { if (animationId !== null) { cancelAnimationFrame(animationId); animationId = null; } }
 
   function renderSnapshot(snapshot) {
-    if (!snapshot) return;
     resizeCanvasBacking();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (mode === 'offline' && localMap) {
-      // The offline renderer draws in WORLD_W x WORLD_H units; scale to the real backing buffer.
-      ctx.setTransform(canvas.width / WORLD_W, 0, 0, canvas.height / WORLD_H, 0, 0);
-      renderOfflineSnapshot(snapshot);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      return;
-    }
-    const world = readField(snapshot, 'wsMaze') || maze;
-    const width = Number(readField(world, 'mazeWidth') || WORLD_W), height = Number(readField(world, 'mazeHeight') || WORLD_H);
-    ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+    ctx.save();
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const world=readField(snapshot,'wsMaze')||maze;
+    const width=Number(readField(world,'mazeWidth')||WORLD_W),height=Number(readField(world,'mazeHeight')||WORLD_H);
+    const scaleX = canvas.width / width;
+    const scaleY = canvas.height / height;
+    ctx.scale(scaleX, scaleY);
     drawGround(width, height);
-    drawWalls(readField(world, 'mazeWalls') || [], width, height);
-    const boxes = readField(snapshot, 'wsMysteryBoxes') || [];
-    boxes.forEach(box => { if (readField(box, 'mbActive') !== false) drawBox(readField(box, 'mbPos'), height); });
-    (readField(snapshot, 'wsLasers') || []).forEach(laser => drawLaser(readField(laser, 'lsStart'), readField(laser, 'lsEnd'), height));
-    (readField(snapshot, 'wsBullets') || []).forEach(b => drawBullet(b, height));
-    (readField(snapshot, 'wsTanks') || []).forEach(t => drawTank(t, height));
+    drawWalls(readField(world,'mazeWalls')||(maze && maze.mazeWalls),width,height);
+    const boxes=readField(snapshot,'wsMysteryBoxes')||[];
+    boxes.forEach(box=>{if(readField(box,'mbActive')!==false)drawBox(readField(box,'mbPos'),height);});
+    (readField(snapshot,'wsLasers')||[]).forEach(laser=>drawLaser(readField(laser,'lsStart'),readField(laser,'lsEnd'),height));
+    (readField(snapshot,'wsBullets')||[]).forEach(b=>drawBullet(b,height));
+    (readField(snapshot,'wsTanks')||[]).forEach(t=>drawTank(t,height));
     drawVignette(width, height);
-    const mineTank = findMyTank(snapshot);
-    if (mineTank) drawAmmoHud(tankStats(mineTank), height - 66);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }
-
-  function renderOfflineSnapshot(snapshot) {
-    const map = localMap;
-    const background = map.background;
-    const view = localViewSize();
-    if (background.complete && background.naturalWidth) {
-      ctx.drawImage(background, camera.x, camera.y, view.width, view.height, 0, 0, WORLD_W, WORLD_H);
-    } else {
-      ctx.fillStyle = '#172017';
-      ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-    }
-    const boxes = readField(snapshot, 'wsMysteryBoxes') || [];
-    boxes.forEach(box => { if (readField(box, 'mbActive') !== false) drawOfflineBox(readField(box, 'mbPos')); });
-    (readField(snapshot, 'wsBullets') || []).forEach(drawOfflineBullet);
-    (readField(snapshot, 'wsTanks') || []).filter(isOfflineTankVisible).forEach(drawOfflineTank);
-    drawFogOfWar();
-    drawAmmoHud(tankStats(localGame.tanks[0]), WORLD_H - 66);
-  }
-
-  function isOfflineTankVisible(tank) {
-    if (!localGame || readField(tank, 'tankAlive') === false) return false;
-    const observer = getOfflineCameraTank();
-    if (!observer || tank.tankId === observer.tankId) return true;
-    const targetPos = readField(tank, 'tankPos');
-    if (!targetPos) return false;
-    // Team mode: vision is shared, a tank is visible when any alive teammate of the observer is in range.
-    if (localGame.team) return localGame.tanks.some(mate => mate.tankAlive && mate.team === observer.team && distance(mate.tankPos, targetPos) <= visionRadius());
-    return distance(observer.tankPos, targetPos) <= visionRadius();
-  }
-
-  function getOfflineCameraTank() {
-    if (!localGame) return null;
-    const player = localGame.tanks[0];
-    if (player && player.tankAlive) return player;
-    if (localGame.team) {   // dead in team mode: watch an alive teammate first
-      const mate = localGame.tanks.find(tank => tank.tankAlive && tank.team === player.team);
-      if (mate) return mate;
-    }
-    return localGame.tanks.find(tank => tank.tankId === localGame.spectatorTankId && tank.tankAlive)
-      || localGame.tanks.slice(1).find(tank => tank.tankAlive)
-      || null;
-  }
-
-  function drawFogOfWar() {
-    const observer = getOfflineCameraTank();
-    if (!observer) return;
-    const screen = localToScreen(observer.tankPos);
-    const radius = visionRadius() * localWorldScale();
-    if (!Number.isFinite(radius)) return;
-    const fogRadius = radius * 1.35;
-    const fog = ctx.createRadialGradient(screen.x, screen.y, radius * .88, screen.x, screen.y, fogRadius);
-    fog.addColorStop(0, 'rgba(4,9,5,0)');
-    fog.addColorStop(.20, 'rgba(4,9,5,0)');
-    fog.addColorStop(.64, 'rgba(4,9,5,.20)');
-    // The last stop keeps terrain readable while clearly fogging the outer map.
-    fog.addColorStop(1, 'rgba(4,9,5,.58)');
-    ctx.save();
-    ctx.fillStyle = fog;
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-    ctx.strokeStyle = 'rgba(224,244,193,.16)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
-    ctx.stroke();
+    if(mode==='offline'&&localGame){drawOfflineHud(localGame);}
     ctx.restore();
   }
 
-  function drawOfflineTank(tank) {
-    if (readField(tank, 'tankAlive') === false) return;
-    const pos = readField(tank, 'tankPos'); if (!pos) return;
-    const screen = localToScreen({ vx: Number(readField(pos, 'vx') || 0), vy: Number(readField(pos, 'vy') || 0) });
-    const x = screen.x, y = screen.y;
-    const color = COLORS[readField(tank, 'tankColor')] || '#8ae65e';
-    const bodyAngle = Number(readField(tank, 'tankBodyAngle') || 0);
-    const turretAngle = Number(readField(tank, 'tankTurretAngle') || 0);
-    const size = localMap.tankSize * localMap.tankScale * Number(TEST_GAME.tankRenderScale || .5) * localWorldScale();
-    ctx.save(); ctx.translate(x, y);
-    const invuln = Number(readField(tank, 'tankInvulnerabilityLeft') || 0);
-    if (invuln > 0) ctx.globalAlpha = Math.floor(performance.now() / 90) % 2 ? .5 : 1;
-    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(8, 10, size * .33, size * .41, 0, 0, Math.PI * 2); ctx.fill();
-    // Enemy tanks get a red marker under their feet (allies and you are not marked).
-    if (sideOf(String(readField(tank, 'tankId') || '')) === 'enemy') {
-      ctx.save();
-      ctx.fillStyle = 'rgba(255, 50, 50, .28)';
-      ctx.strokeStyle = 'rgba(255, 70, 60, .95)';
-      ctx.lineWidth = Math.max(2, size * .035);
-      ctx.beginPath(); ctx.arc(0, 0, size * .42, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      ctx.restore();
-    }
-    const sprites = spritesFor(readField(tank, 'tankId'));
-    const hull = sprites.hull;
-    if (hull && hull.complete && hull.naturalWidth) {
-      ctx.save(); ctx.rotate(bodyAngle + Math.PI / 2); drawTinted(hull, color, -size / 2, -size / 2, size, size); ctx.restore();
-    } else {
-      ctx.fillStyle = color; ctx.fillRect(-size * .29, -size * .38, size * .58, size * .76);
-    }
-    const gun = sprites.gun;
-    if (gun && gun.complete && gun.naturalWidth) {
-      ctx.save(); ctx.rotate(turretAngle + Math.PI / 2); drawTinted(gun, color, -size / 2, -size / 2, size, size); ctx.restore();
-    }
-    if (invuln > 0) { ctx.globalAlpha = 1; drawShield(size * .5); }
-    ctx.restore();
-    const tagId = String(readField(tank, 'tankId') || ''), tagSide = sideOf(tagId);
-    drawNameTag(x, y - size * .5 - 4, tagId, tagSide === 'me' ? '#f9df8b' : tagSide === 'ally' ? '#7cc0ff' : '#ff8a80');
-  }
-
-  // Player name above a tank: gold = you, blue = ally, red = enemy.
-  function drawNameTag(x, y, name, color) {
-    if (!name) return;
-    const text = name.length > 14 ? `${name.slice(0, 13)}…` : name;
-    ctx.save();
-    ctx.font = '700 12px "IBM Plex Mono", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0, 0, 0, .75)'; ctx.strokeText(text, x, y);
-    ctx.fillStyle = color; ctx.fillText(text, x, y);
-    ctx.restore();
-  }
-
-  function drawShield(radius) {
-    const pulse = .5 + .5 * Math.sin(performance.now() / 55);
-    ctx.save();
-    ctx.globalAlpha = .35 + .45 * pulse;
-    ctx.strokeStyle = '#8be9ff'; ctx.fillStyle = 'rgba(120,225,255,.16)';
-    ctx.shadowColor = '#8be9ff'; ctx.shadowBlur = 14; ctx.lineWidth = Math.max(2, radius * .06);
-    ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.restore();
-  }
-
-  function bulletColor(type) {
-    return type === 'LaserBullet' ? '#82f9ff' : type === 'ShotgunBullet' ? '#ffca73' : type === 'WallPiercingBullet' ? '#c39aff' : type === 'GatlingBullet' ? '#ff9658' : '#e6efc4';
-  }
-
-  function drawOfflineBullet(bullet) {
-    const pos = readField(bullet, 'bulPos'); if (!pos) return;
-    const type = readField(bullet, 'bulType') || 'NormalBullet';
-    const screen = localToScreen({ vx: Number(readField(pos, 'vx') || 0), vy: Number(readField(pos, 'vy') || 0) });
-    const color = bulletColor(type);
-    const radius = Math.max(2, (type === 'ShotgunBullet' ? 9 : 7) * localWorldScale());
-    ctx.save(); ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 12; ctx.beginPath(); ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-  }
-
-  function drawOfflineBox(pos) {
-    if (!pos) return;
-    const screen = localToScreen({ vx: Number(readField(pos, 'vx') || 0), vy: Number(readField(pos, 'vy') || 0) });
-    const x = screen.x, y = screen.y;
-    const size = 56 * localWorldScale();
-    const image = images.box;
-    ctx.save(); ctx.shadowColor = '#f3d466'; ctx.shadowBlur = 18;
-    if (image && image.complete && image.naturalWidth) ctx.drawImage(image, x - size / 2, y - size / 2, size, size);
-    else { ctx.fillStyle = '#e1bc4e'; ctx.fillRect(x - size * .4, y - size * .4, size * .8, size * .8); ctx.fillStyle = '#132013'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('?', x, y + 4); }
-    ctx.restore();
-  }
-
-  // Bottom-left ammo counter (digit sprites) or the reload spinner. Works for both modes.
-  function drawAmmoHud(stats, y) {
-    if (!stats || !stats.hasAmmo || !stats.alive) return;
-    const x = 20;
-    if (stats.reload > 0) {
-      const frame = 1 + Math.floor(performance.now() / 83) % 8;
-      const image = hudImages[`loading-${frame}`];
-      if (image && image.complete && image.naturalWidth) ctx.drawImage(image, x, y, 56, 56);
-      return;
-    }
-    String(Math.max(0, Math.floor(stats.ammo))).split('').forEach((digit, index) => {
-      const image = hudImages[`digit-${digit}`];
-      if (image && image.complete && image.naturalWidth) ctx.drawImage(image, x + index * 37, y, 34, 52);
-    });
-  }
-
-  // Online renderer (server world, Y axis points up so every y is flipped with `height`).
-  function drawGround(w = WORLD_W, h = WORLD_H) {
-    ctx.fillStyle = '#1d3020'; ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(126,163,100,.04)';
+  function drawGround(w = WORLD_W, h = WORLD_H){
+    ctx.fillStyle='#1d3020';ctx.fillRect(0,0,w,h);
+    ctx.fillStyle='rgba(126,163,100,.04)';
     const tileSize = 32;
-    for (let y = 0; y < h; y += tileSize) {
-      for (let x = 0; x < w; x += tileSize) {
-        if (((Math.floor(x / tileSize) + Math.floor(y / tileSize)) % 2) === 0) ctx.fillRect(x, y, tileSize, tileSize);
+    for(let y=0;y<h;y+=tileSize){
+      for(let x=0;x<w;x+=tileSize){
+        if(((Math.floor(x/tileSize)+Math.floor(y/tileSize))%2)===0)ctx.fillRect(x,y,tileSize,tileSize);
       }
     }
-    ctx.strokeStyle = 'rgba(167,205,137,.08)'; ctx.lineWidth = 1;
-    for (let x = 0; x <= w; x += tileSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-    for (let y = 0; y <= h; y += tileSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+    ctx.strokeStyle='rgba(167,205,137,.08)';ctx.lineWidth=1;
+    for(let x=0;x<=w;x+=tileSize){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+    for(let y=0;y<=h;y+=tileSize){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
     // Subtle worn ground flecks
     const dotCount = Math.floor((w * h) / 10000);
-    for (let i = 0; i < dotCount; i++) {
-      const x = (i * 157 + 33) % w, y = (i * 97 + 19) % h;
-      ctx.fillStyle = 'rgba(182,208,143,.045)'; ctx.fillRect(x, y, 2, 2);
+    for(let i=0;i<dotCount;i++){
+      const x=(i*157+33)%w,y=(i*97+19)%h;
+      ctx.fillStyle='rgba(182,208,143,.045)';ctx.fillRect(x,y,2,2);
     }
   }
 
-  function drawWalls(walls, width, height) {
-    ctx.save(); ctx.lineCap = 'square';
-    (walls || []).forEach((wall, index) => {
-      const a = readField(wall, 'wallStart'), b = readField(wall, 'wallEnd'); if (!a || !b) return;
-      const x1 = Number(readField(a, 'vx') || 0), y1 = height - Number(readField(a, 'vy') || 0);
-      const x2 = Number(readField(b, 'vx') || 0), y2 = height - Number(readField(b, 'vy') || 0);
-      ctx.strokeStyle = 'rgba(5,11,7,.55)'; ctx.lineWidth = index < 4 ? 15 : 12; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-      ctx.strokeStyle = index < 4 ? '#68815b' : '#58704d'; ctx.lineWidth = index < 4 ? 10 : 8; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-      ctx.strokeStyle = 'rgba(207,232,171,.18)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x1 + (x2 - x1) * .04, y1 + (y2 - y1) * .04 - 1); ctx.lineTo(x2 - (x2 - x1) * .04, y2 - (y2 - y1) * .04 - 1); ctx.stroke();
+  function drawWalls(walls,width,height){
+    ctx.save();ctx.lineCap='square';
+    (walls||[]).forEach((wall,index)=>{
+      const a=readField(wall,'wallStart'),b=readField(wall,'wallEnd');if(!a||!b)return;
+      const x1=Number(readField(a,'vx')||0),y1=height-Number(readField(a,'vy')||0);
+      const x2=Number(readField(b,'vx')||0),y2=height-Number(readField(b,'vy')||0);
+      ctx.strokeStyle='rgba(5,11,7,.55)';ctx.lineWidth=index<4?15:12;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+      ctx.strokeStyle=index<4?'#68815b':'#58704d';ctx.lineWidth=index<4?10:8;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+      ctx.strokeStyle='rgba(207,232,171,.18)';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x1+(x2-x1)*.04,y1+(y2-y1)*.04-1);ctx.lineTo(x2-(x2-x1)*.04,y2-(y2-y1)*.04-1);ctx.stroke();
       // Small rivets on straight wall runs.
       const len = Math.hypot(x2 - x1, y2 - y1), n = Math.floor(len / 24);
       for (let j = 1; j < n; j++) { const x = x1 + (x2 - x1) * j / n, y = y1 + (y2 - y1) * j / n; ctx.fillStyle = '#344633'; ctx.fillRect(x - 1, y - 1, 2, 2); }
@@ -2347,440 +1987,93 @@
     if (type === 'LaserBullet') { ctx.fillRect(x - 2, y - 6, 4, 12); } else { ctx.beginPath(); ctx.arc(x, y, type === 'ShotgunBullet' ? 3.5 : 3, 0, Math.PI * 2); ctx.fill(); }
     ctx.restore();
   }
-  function drawBox(pos, height = WORLD_H) {
-    if (!pos) return; const x = Number(readField(pos, 'vx') || 0), y = height - Number(readField(pos, 'vy') || 0);
-    const im = images.box;
-    ctx.save(); ctx.shadowColor = '#e8c95a'; ctx.shadowBlur = 12;
-    if (im && im.complete && im.naturalWidth) { ctx.drawImage(im, x - 13, y - 13, 26, 26); } else { ctx.fillStyle = '#d3aa42'; ctx.fillRect(x - 11, y - 11, 22, 22); ctx.fillStyle = '#1c281b'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('?', x, y + 6); }
+  function drawBox(pos, height = WORLD_H){
+    if(!pos)return;const x=Number(readField(pos,'vx')||0),y=height-Number(readField(pos,'vy')||0);
+    const im=images.box;
+    ctx.save();ctx.shadowColor='#e8c95a';ctx.shadowBlur=12;
+    if(im&&im.complete&&im.naturalWidth){ctx.drawImage(im,x-13,y-13,26,26);}else{ctx.fillStyle='#d3aa42';ctx.fillRect(x-11,y-11,22,22);ctx.fillStyle='#1c281b';ctx.font='bold 16px sans-serif';ctx.textAlign='center';ctx.fillText('?',x,y+6);}
     ctx.restore();
   }
-  function drawLaser(a, b, height) { if (!a || !b) return; const x1 = Number(readField(a, 'vx') || 0), y1 = height - Number(readField(a, 'vy') || 0), x2 = Number(readField(b, 'vx') || 0), y2 = height - Number(readField(b, 'vy') || 0); ctx.save(); ctx.strokeStyle = '#89faff'; ctx.shadowColor = '#89faff'; ctx.shadowBlur = 12; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore(); }
-  function drawVignette(w = WORLD_W, h = WORLD_H) { const grad = ctx.createRadialGradient(w / 2, h / 2, 80, w / 2, h / 2, Math.max(w, h) * .75); grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(4,10,5,.33)'); ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h); }
+  function drawLaser(a,b,height){if(!a||!b)return;const x1=Number(readField(a,'vx')||0),y1=height-Number(readField(a,'vy')||0),x2=Number(readField(b,'vx')||0),y2=height-Number(readField(b,'vy')||0);ctx.save();ctx.strokeStyle='#89faff';ctx.shadowColor='#89faff';ctx.shadowBlur=12;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();}
+  function drawVignette(w = WORLD_W, h = WORLD_H){const grad=ctx.createRadialGradient(w/2,h/2,80,w/2,h/2,Math.max(w,h)*.75);grad.addColorStop(0,'rgba(0,0,0,0)');grad.addColorStop(1,'rgba(4,10,5,.33)');ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);}
+  function drawOfflineHud(g){ctx.save();ctx.fillStyle='rgba(7,13,8,.74)';ctx.fillRect(14,14,144,45);ctx.strokeStyle='rgba(199,243,107,.4)';ctx.strokeRect(14,14,144,45);ctx.fillStyle='#9caf94';ctx.font='8px "IBM Plex Mono",monospace';ctx.fillText('MẠNG CÒN LẠI',25,29);ctx.fillStyle='#c7f36b';ctx.font='bold 20px "Barlow Condensed",sans-serif';ctx.fillText('♥ '.repeat(Math.max(0,g.lives))+' '.repeat(Math.max(0,5-g.lives)),25,49);ctx.restore();}
 
-  // ---------------------------------------------------------------- HUD
-
-  function updateMatchHeader(snapshot) {
-    if (!snapshot) return;
-    const tanks = readField(snapshot, 'wsTanks') || [];
-    const mine = tanks.find(t => readField(t, 'tankId') === username) || tanks.find(t => readField(t, 'tankId') === displayName) || tanks[0];
-    $('match-player-count').textContent = String(tanks.length || 1);
-    $('match-score').textContent = String(mine ? tankStats(mine).points : 0);
-    if (mode === 'online' && activeRoom) $('match-room').textContent = readField(activeRoom, 'riRoomId') || 'ONLINE';
+  function updateMatchHeader(snapshot){
+    if(!snapshot)return;
+    const tanks=readField(snapshot,'wsTanks')||[];
+    const mine=tanks.find(t=>readField(t,'tankId')===username)||tanks.find(t=>readField(t,'tankId')===displayName)||tanks[0];
+    $('match-player-count').textContent=String(tanks.length||1);
+    $('match-score').textContent=String(mine?(Number(readField(mine,'tankKills')||0) || Number(readField(mine,'tankScore')||0)):0);
+    if(mode==='online'&&activeRoom)$('match-room').textContent=readField(activeRoom,'riRoomId')||'ONLINE';
+    if(mode==='offline')$('match-score').textContent=String(localGame?localGame.score:0);
   }
-  // Normalises a Tank (server snapshot or local simulation) into plain numbers for the HUD.
-  function tankStats(tank) {
-    const num = (key, fallback = 0) => { const v = Number(readField(tank, key)); return Number.isFinite(v) ? v : fallback; };
-    const kills = num('tankKills');
-    const hasPoints = readField(tank, 'tankPoints') !== undefined;
-    return {
-      id: String(readField(tank, 'tankId') || 'PLAYER'),
-      color: readField(tank, 'tankColor') || 'TankGreen',
-      alive: readField(tank, 'tankAlive') !== false,
-      kills, deaths: num('tankDeaths'),
-      points: hasPoints ? num('tankPoints') : kills,
-      streak: num('tankKillStreak'),
-      respawn: num('tankRespawnTimer'), respawnKnown: readField(tank, 'tankRespawnTimer') !== undefined,
-      invuln: num('tankInvulnerabilityLeft'), team: num('tankTeam', -1),
-      hasAmmo: readField(tank, 'tankAmmo') !== undefined,
-      ammo: num('tankAmmo'), maxAmmo: num('tankMaxAmmo', RULES.magazineSize), reload: num('tankReloadTimer')
-    };
+  function updateScoreboard(snapshot){
+    const root=$('scoreboard');root.innerHTML='';if(!snapshot)return;
+    const tanks=readField(snapshot,'wsTanks')||[];const scorePairs=readField(snapshot,'wsScores')||[];
+    const entries=tanks.map(t=>({name:readField(t,'tankId')||'PLAYER',color:readField(t,'tankColor')||'TankGreen',score:Number(readField(t,'tankKills')||0),alive:readField(t,'tankAlive')!==false}));
+    scorePairs.forEach(pair=>{if(!Array.isArray(pair))return;let item=entries.find(e=>e.name===pair[0]);if(!item){item={name:pair[0],color:'TankBlue',score:0,alive:true};entries.push(item);}item.score=Math.max(item.score,Number(pair[1]||0));});
+    entries.sort((a,b)=>b.score-a.score);
+    if(!entries.length){root.innerHTML='<div class="feed-item muted">Đang đợi dữ liệu người chơi…</div>';return;}
+    entries.forEach(e=>{const row=document.createElement('div');row.className='score-row';const dot=document.createElement('span');dot.className='score-dot';dot.style.background=COLORS[e.color]||'#c7f36b';const name=document.createElement('span');name.className='score-name';name.textContent=e.name+(e.alive?'':' · OUT');const score=document.createElement('strong');score.className='score-value';score.textContent=String(e.score);row.append(dot,name,score);root.append(row);});
   }
-
-  function findMyTank(snapshot) {
-    const tanks = readField(snapshot, 'wsTanks') || [];
-    return tanks.find(t => readField(t, 'tankId') === username) || tanks.find(t => readField(t, 'tankId') === displayName) || tanks[0] || null;
+  function updateWeaponPanel(snapshot){
+    if(!snapshot||!$('weapon-name'))return;const tanks=readField(snapshot,'wsTanks')||[];
+    const mine=tanks.find(t=>readField(t,'tankId')===username)||tanks.find(t=>readField(t,'tankId')===displayName)||tanks[0];if(!mine)return;
+    const weapon=readField(mine,'tankWeapon')||{};const type=readField(weapon,'wsCurrentWeapon')||'NormalBullet';
+    const buff=Number(readField(weapon,'wsBuffTimeLeft')||0);const cooldown=readField(weapon,'wsCooldownState');
+    if($('weapon-name')) $('weapon-name').textContent=weaponName(type).toUpperCase();
+    if($('weapon-symbol')) $('weapon-symbol').textContent=weaponSymbol(type);
+    if($('weapon-timer')) $('weapon-timer').textContent=buff>0?`BUFF CÒN ${buff.toFixed(1)}S`:cooldown==='Ready'||tagOf(cooldown)==='Ready'?'SẴN SÀNG':'ĐANG HỒI ĐẠN';
+    let ratio=1;if(typeof cooldown==='object'&&cooldown){const tag=tagOf(cooldown);if(tag==='Reloading'){const v=Array.isArray(cooldown.contents)?cooldown.contents[0]:cooldown.contents;const maxCooldown=type==='NormalBullet'?0.5:1.0;ratio=1-clamp(Number(v||0)/maxCooldown,0,1);}else if(tag==='GatlingBurst'){ratio=.65;}}
+    if($('cooldown-fill')) $('cooldown-fill').style.width=`${Math.round(ratio*100)}%`;
   }
+  function weaponName(type){return ({NormalBullet:'Đạn thường',ShotgunBullet:'Đạn chùm',LaserBullet:'Tia laser',WallPiercingBullet:'Đạn xuyên tường',GatlingBullet:'Đạn liên thanh'})[type]||String(type||'Đạn thường').replace('Bullet','');}
+  function weaponSymbol(type){return ({NormalBullet:'●',ShotgunBullet:'✹',LaserBullet:'ϟ',WallPiercingBullet:'↗',GatlingBullet:'»'})[type]||'●';}
+  function addFeed(text,type=''){const root=$('event-feed');if(!root)return;const row=document.createElement('div');row.className=`feed-item ${type}`;const time=new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});row.textContent=`[${time}] ${text}`;root.prepend(row);while(root.children.length>8)root.lastElementChild.remove();}
 
-  function isMe(name) { return !!name && (name === username || name === displayName); }
-
-  function scoreboardEntries(snapshot) {
-    const entries = (readField(snapshot, 'wsTanks') || []).map(tankStats);
-    // Fallback rows (e.g. the round-end payload carries only name/score pairs).
-    (readField(snapshot, 'wsScores') || []).forEach(pair => {
-      if (!Array.isArray(pair) || entries.some(e => e.id === pair[0])) return;
-      entries.push({ id: String(pair[0]), color: 'TankBlue', alive: true, kills: 0, deaths: 0, points: Number(pair[1] || 0), streak: 0, respawn: 0, invuln: 0 });
-    });
-    // Team mode: your team is listed first.
-    const myTeam = (entries.find(e => isMe(e.id)) || {}).team;
-    const side = e => e.team < 0 || e.team === myTeam ? 0 : 1;
-    entries.sort((a, b) => side(a) - side(b) || b.points - a.points || b.kills - a.kills || a.deaths - b.deaths);
-    return entries;
+  function showOverlay(title,text,buttonText,action){$('overlay-title').textContent=title;$('overlay-text').textContent=text;$('overlay-action').textContent=buttonText;roundOverlayAction=action;$('arena-overlay').hidden=false;}
+  function hideOverlay(){$('arena-overlay').hidden=true;roundOverlayAction=null;}
+  function updateCurrentInput(){
+    if(mode!=='online'||!wsReady||!loggedIn||screenName!=='game')return;
+    const snapshot=latestSnapshot;if(!snapshot)return;
+    const tanks=readField(snapshot,'wsTanks')||[];const me=tanks.find(t=>readField(t,'tankId')===username)||tanks[0];if(!me)return;
+    const pos=readField(me,'tankPos')||{vx:0,vy:0};
+    const mouseWorldX=input.mouseX,mouseWorldY=WORLD_H-input.mouseY;
+    const angle=Math.atan2(mouseWorldY-Number(readField(pos,'vy')||0),mouseWorldX-Number(readField(pos,'vx')||0));
+    sendMessage('CPlayerInput',{piMoveUp:input.up,piMoveDown:input.down,piMoveLeft:input.left,piMoveRight:input.right,piMouseAngle:angle,piFire:input.fire});
   }
+  function startInputSender(){stopInputSender();inputTimer=window.setInterval(updateCurrentInput,1000/30);}
+  function stopInputSender(){if(inputTimer!==null){clearInterval(inputTimer);inputTimer=null;}}
 
-  function updateScoreboard(snapshot) {
-    const root = $('scoreboard'); root.innerHTML = ''; if (!snapshot) return;
-    const entries = scoreboardEntries(snapshot);
-    if (!entries.length) { root.innerHTML = '<div class="feed-item muted">Đang đợi dữ liệu người chơi…</div>'; return; }
-    entries.forEach(e => {
-      const row = document.createElement('div'); row.className = 'score-row';
-      const dot = document.createElement('span'); dot.className = 'score-dot'; dot.style.background = COLORS[e.color] || '#c7f36b';
-      const name = document.createElement('span'); name.className = 'score-name';
-      name.textContent = `${e.id} · ${e.kills}/${e.deaths}${e.alive ? '' : (e.team >= 0 ? ' · ĐÃ HẠ' : ' · CHỜ')}`;
-      const score = document.createElement('strong'); score.className = 'score-value'; score.textContent = String(e.points);
-      row.append(dot, name, score); root.append(row);
-    });
-  }
-
-  function updateWeaponPanel(snapshot) {
-    if (!snapshot || !$('weapon-name')) return; const tanks = readField(snapshot, 'wsTanks') || [];
-    const mine = tanks.find(t => readField(t, 'tankId') === username) || tanks.find(t => readField(t, 'tankId') === displayName) || tanks[0]; if (!mine) return;
-    const weapon = readField(mine, 'tankWeapon') || {}; const type = readField(weapon, 'wsCurrentWeapon') || 'NormalBullet';
-    const buff = Number(readField(weapon, 'wsBuffTimeLeft') || 0); const cooldown = readField(weapon, 'wsCooldownState');
-    if ($('weapon-name')) $('weapon-name').textContent = weaponName(type).toUpperCase();
-    if ($('weapon-symbol')) $('weapon-symbol').textContent = weaponSymbol(type);
-    if ($('weapon-timer')) $('weapon-timer').textContent = buff > 0 ? `BUFF CÒN ${buff.toFixed(1)}S` : cooldown === 'Ready' || tagOf(cooldown) === 'Ready' ? 'SẴN SÀNG' : 'ĐANG HỒI ĐẠN';
-    let ratio = 1; if (typeof cooldown === 'object' && cooldown) { const tag = tagOf(cooldown); if (tag === 'Reloading') { const v = Array.isArray(cooldown.contents) ? cooldown.contents[0] : cooldown.contents; const maxCooldown = type === 'NormalBullet' ? 0.5 : 1.0; ratio = 1 - clamp(Number(v || 0) / maxCooldown, 0, 1); } else if (tag === 'GatlingBurst') { ratio = .65; } }
-    const st = tankStats(mine);
-    if (st.hasAmmo && st.reload > 0) {
-      ratio = 1 - clamp(st.reload / RULES.reloadSeconds, 0, 1);
-      if ($('weapon-timer')) $('weapon-timer').textContent = `ĐANG NẠP ĐẠN ${st.reload.toFixed(1)}S`;
+  function setKey(key,pressed){const k=key.toLowerCase();if(['w','arrowup'].includes(k))input.up=pressed;else if(['s','arrowdown'].includes(k))input.down=pressed;else if(['a','arrowleft'].includes(k))input.left=pressed;else if(['d','arrowright'].includes(k))input.right=pressed;else if(k===' '||k==='space')input.fire=pressed;}
+  document.addEventListener('keydown',e=>{
+    if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+    setKey(e.key,true);
+    if(e.key==='Escape'&&screenName==='game'){
+      e.preventDefault();
+      togglePauseModal();
     }
-    if ($('cooldown-fill')) $('cooldown-fill').style.width = `${Math.round(ratio * 100)}%`;
-  }
-  function weaponName(type) { return ({ NormalBullet: 'Đạn thường', ShotgunBullet: 'Đạn chùm', LaserBullet: 'Tia laser', WallPiercingBullet: 'Đạn xuyên tường', GatlingBullet: 'Đạn liên thanh' })[type] || String(type || 'Đạn thường').replace('Bullet', ''); }
-  function weaponSymbol(type) { return ({ NormalBullet: '●', ShotgunBullet: '✹', LaserBullet: 'ϟ', WallPiercingBullet: '↗', GatlingBullet: '»' })[type] || '●'; }
-  function addFeed(text, type = '') { const root = $('event-feed'); if (!root) return; const row = document.createElement('div'); row.className = `feed-item ${type}`; const time = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); row.textContent = `[${time}] ${text}`; root.prepend(row); while (root.children.length > 8) root.lastElementChild.remove(); }
-
-  // ---------------------------------------------------------------- gameplay HUD (K/D, score, kill feed, banners)
-
-  function setText(id, value) {
-    const el = $(id);
-    const text = String(value);
-    if (el && el.textContent !== text) el.textContent = text;
-  }
-
-  function formatClock(seconds) {
-    const total = Math.max(0, Math.floor(seconds));
-    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-  }
-
-  function matchSeconds() {
-    if (mode === 'offline') return localGame ? (localGame.team ? localGame.roundClock : localGame.time) : 0;
-    return matchClockStart ? (performance.now() - matchClockStart) / 1000 : 0;
-  }
-
-  function matchLimitSeconds() { return mode === 'offline' && localGame && localGame.team ? botSettings.teamRoundSeconds : botSettings.matchSeconds; }
-
-  function resetMatchUi() {
-    killTracker.clear(); streakTracker.clear(); lastKnownStreak.clear();
-    lastKillerOfMe = ''; myDeathAt = 0; myWasAlive = true;
-    matchClockStart = performance.now();
-    document.body.classList.remove('player-dead');
-    lastClockBeep = null; minuteWarnKey = null; countdownActive = false; matchPointActive = false; firstBloodDone = false; hideEndSplash(); removeCountdownOverlay();
-    resetAnnouncements();
-    const feed = $('kill-feed'); if (feed) feed.innerHTML = '';
-    clearTimeout(bannerTimer);
-    ['kill-banner', 'respawn-banner', 'shield-chip'].forEach(id => { const el = $(id); if (el) el.hidden = true; });
-    showTabScoreboard(false);
-    stopShotSounds();
-  }
-
-  // Online only: remember who was alive with which streak, and when we died (client-side respawn fallback).
-  function trackSnapshot(snapshot) {
-    if (!snapshot) return;
-    (readField(snapshot, 'wsTanks') || []).forEach(tank => {
-      const st = tankStats(tank);
-      if (st.alive) lastKnownStreak.set(st.id, st.streak);
-      if (isMe(st.id)) {
-        if (myWasAlive && !st.alive) myDeathAt = performance.now();
-        myWasAlive = st.alive;
-      }
-    });
-  }
-
-  function updateGameplayHud(snapshot) {
-    if (!snapshot) return;
-    const me = findMyTank(snapshot); if (!me) return;
-    const st = tankStats(me);
-    // Dead: the whole battlefield turns grey (like LoL / AOV) until you are back in the fight.
-    const fighting = screenName === 'game' && !(mode === 'offline' && localGame && (localGame.gameOver || localGame.awaitingNext || localGame.startCountdown > 0));
-    document.body.classList.toggle('player-dead', fighting && !st.alive);
-    setText('kda-kills', st.kills);
-    setText('kda-deaths', st.deaths);
-    setText('kda-points', `SCORE: ${st.points}`);
-    const streak = $('kda-streak');
-    if (streak) { streak.hidden = st.streak < 1; setText('kda-streak', `CHUỖI: ${st.streak}`); }
-    const remainingMatch = Math.max(0, matchLimitSeconds() - matchSeconds());
-    setText('match-clock', formatClock(Math.ceil(remainingMatch)));
-    const clockEl = $('match-clock');
-    if (clockEl) clockEl.classList.toggle('low', remainingMatch <= 30);
-    // One-minute warning: the moment the clock reads 1:00 the banner shows at once and the 1mincountdown soundtrack
-    // replaces the match music, looping until the match ends. Team mode does the same in every round.
-    const warnKey = mode === 'offline' && localGame && localGame.team ? `r${localGame.round}` : 'match';
-    const inPlay = !(mode === 'offline' && localGame && (localGame.gameOver || localGame.roundOver));
-    if (matchLimitSeconds() > 60 && remainingMatch > 0 && remainingMatch <= 60 && minuteWarnKey !== warnKey && inPlay) {
-      minuteWarnKey = warnKey;
-      showKillBanner('1 MINUTE LEFT', 'FIGHT TILL THE END. DONT GIVE UP YET.', 'minute', 'TIME WARNING', 5000);
-    }
-    const shouldCount = minuteWarnKey === warnKey && remainingMatch > 0 && inPlay && !countdownBroken && screenName === 'game';
-    if (shouldCount !== countdownActive) { countdownActive = shouldCount; syncMusicForScreen(); }
-    const wholeLeft = Math.ceil(remainingMatch);
-    if (remainingMatch > 0 && wholeLeft <= 5 && wholeLeft !== lastClockBeep) { lastClockBeep = wholeLeft; }
-
-    const respawnBanner = $('respawn-banner');
-    if (respawnBanner) {
-      const teamMode = mode === 'offline' && !!localGame && localGame.team;
-      let remaining = 0;
-      if (!st.alive) remaining = st.respawnKnown ? st.respawn : Math.max(0, RULES.respawnSeconds - (performance.now() - myDeathAt) / 1000);
-      // Team mode has no respawn: the panel stays until the next round starts.
-      respawnBanner.hidden = teamMode ? (st.alive || localGame.awaitingNext || localGame.gameOver) : !(!st.alive && remaining > 0);
-      respawnBanner.classList.toggle('team', teamMode);
-      if (!respawnBanner.hidden) {
-        setText('respawn-by', lastKillerOfMe ? `${lastKillerOfMe} đã hạ bạn` : 'BẠN ĐÃ BỊ HẠ');
-        setText('respawn-count', teamMode ? '✖' : remaining.toFixed(1));
-        const labelEl = respawnBanner.querySelector('.respawn-label');
-        const labelText = teamMode ? 'CHỜ VÁN SAU · ĐANG XEM ĐỒNG ĐỘI' : 'GIÂY ĐỂ HỒI SINH';
-        if (labelEl && labelEl.textContent !== labelText) labelEl.textContent = labelText;
-      }
-    }
-    const chip = $('shield-chip');
-    if (chip) {
-      chip.hidden = !(st.alive && st.invuln > 0);
-      if (!chip.hidden) setText('shield-time', `${st.invuln.toFixed(1)}s`);
-    }
-    if (tabHeld) renderTabScoreboard(snapshot);
-  }
-
-  function colorOfTank(name) {
-    const tanks = latestSnapshot ? (readField(latestSnapshot, 'wsTanks') || []) : [];
-    const tank = tanks.find(t => readField(t, 'tankId') === name);
-    return COLORS[tank ? readField(tank, 'tankColor') : ''] || '#e8f0df';
-  }
-
-  function parseTier(value) {
-    if (typeof value === 'number') return clamp(Math.floor(value), 0, 5);
-    const text = String(tagOf(value) || value || '').toLowerCase();
-    if (text.includes('penta')) return 5;
-    if (text.includes('quadra')) return 4;
-    if (text.includes('triple')) return 3;
-    if (text.includes('double')) return 2;
-    if (text.includes('slain') || text.includes('single')) return 1;
-    return 0;
-  }
-
-  function handleOnlineKillEvent(values) {
-    const killer = String(values[0] || 'Ai đó'), victim = String(values[1] || 'đối thủ');
-    const now = performance.now();
-    const hasTier = values[2] !== undefined && values[2] !== null;
-    let tier = hasTier ? Math.max(1, parseTier(values[2])) : 0;
-    if (!tier) {
-      // Backend did not send a multi-kill level: count kills inside the time window here.
-      const record = killTracker.get(killer);
-      const count = record && now - record.last <= RULES.multiKillWindow * 1000 ? record.count + 1 : 1;
-      killTracker.set(killer, { count, last: now });
-      tier = Math.min(count, 5);
-    }
-    const shutdown = values[3] !== undefined && values[3] !== null
-      ? (values[3] === true || Number(values[3]) > 0)
-      : (lastKnownStreak.get(victim) || 0) >= RULES.streakStart;
-    const hasStreak = values[4] !== undefined && values[4] !== null;
-    const streak = hasStreak ? Number(values[4]) || 0 : (streakTracker.get(killer) || 0) + 1;
-    streakTracker.set(killer, streak);
-    streakTracker.delete(victim);
-    killTracker.delete(victim);
-    lastKnownStreak.set(victim, 0);
-    announceKill({ killer, victim, tier, streak, shutdown, points: RULES.killPoints + (shutdown ? RULES.shutdownBonus : 0) });
-  }
-
-  // 'me' | 'ally' (team mode only) | 'enemy'
-  function sideOf(name) {
-    if (isMe(name)) return 'me';
-    if (mode === 'offline' && localGame && localGame.team) {
-      const tank = localGame.tanks.find(t => t.tankId === name);
-      if (tank && tank.team === localGame.tanks[0].team) return 'ally';
-    }
-    return 'enemy';
-  }
-
-  // One entry point for a kill, used by the local simulation and by SKillEvent.
-  function announceKill({ killer, victim, tier = 1, streak = 0, shutdown = false, points = RULES.killPoints }) {
-    // Once the match is over (results screen) there are no more kill notifications.
-    if (screenName !== 'game' || (mode === 'offline' && localGame && localGame.gameOver)) return;
-    const mineKiller = isMe(killer), mineVictim = isMe(victim);
-    const killerSide = sideOf(killer), victimSide = sideOf(victim);
-    if (mineVictim) lastKillerOfMe = killer;
-    // 3+ kills in a row without dying, but spread out too far to count as a multi-kill: Ultimate ... Legendary (7+).
-    const streakTier = tier < 2 && streak >= 3 ? Math.min(streak, 7) : 0;
-    const firstBlood = !firstBloodDone;
-    firstBloodDone = true;
-    pushKillFeed({ killer, victim, tier, streakTier, shutdown, points, firstBlood, mine: mineKiller || mineVictim });
-    addFeed(`${killer} hạ ${victim}${tier >= 2 ? ` · ${MULTI_TITLES[tier]}` : ''}${shutdown ? ` · SHUTDOWN +${RULES.shutdownBonus}` : ''}`, 'warn');
-    const who = mineKiller ? 'Bạn' : killer;
-    const enemy = killerSide === 'enemy';   // team mode: allies use the normal voices, only real enemies use enemy_*
-    const tag = title => title;   // no "ENEMY" prefix: enemy banners are told apart by colour
-    // Only the announcements this kill really earns are queued; they play one after another (banner + voice):
-    //   - FIRST BLOOD (firstblood.mp3, shared by you and the enemy): shown first, alone (no slain / defeated)
-    //   - Double / Triple / Quadra / Penta kill, or Ultimate ... Legendary: only that title + its own voice
-    //   - SHUTDOWN (shutdown.mp3): only the shutdown banner + voice (no "ENEMY" prefix, no defeated)
-    //   - a plain kill with none of the above: slain.mp3 (you kill an enemy) / defeated.mp3 (an enemy kills you) / enemy_defeated.mp3 (an enemy kills an enemy)
-    // Being killed is shown by the respawn countdown panel, so there is no SLAIN-style banner for that.
-    const vol = mineKiller ? .85 : .7;
-    const special = firstBlood || tier >= 2 || streakTier || shutdown;
-    if (firstBlood) queueAnnouncement({ banner: [tag('FIRST BLOOD'), `${who} đã hạ ${victim}`, 'firstblood', 'FIRST BLOOD', 3000], voice: 'firstBlood', vol, fallback: () => playKillSting(1, true) });
-    if (tier >= 2) queueAnnouncement({ banner: [tag(MULTI_TITLES[tier]), `${who} đã hạ ${victim}`, `multi-${tier}`, 'MULTI KILL', tier >= 5 ? 3600 : 2800], voice: voiceKey(MULTI_SOUNDS[tier], enemy), vol, fallback: () => playKillSting(tier) });
-    else if (streakTier) queueAnnouncement({ banner: [tag(STREAK_TITLES[streakTier]), `${who} đã hạ ${victim} · chuỗi ${streak} mạng`, `streak-${streakTier}`, 'KILLING SPREE', streakTier >= 7 ? 3400 : 2800], voice: voiceKey(STREAK_SOUNDS[streakTier], enemy), vol, fallback: () => playKillSting(Math.min(5, streakTier)) });
-    if (shutdown) queueAnnouncement({ banner: ['SHUTDOWN', `${who} đã chấm dứt chuỗi của ${victim} · +${RULES.shutdownBonus}`, 'shutdown', 'SHUTDOWN', 2800], voice: 'shutdown', vol, fallback: () => playKillSting(1, true) });
-    const teamVoices = mode === 'offline' && !!localGame && !!localGame.team;
-    if (!special && teamVoices) {
-      // Team modes: the voice depends on which side scored. The banner for my own kill is unchanged.
-      const ourSideScored = killerSide !== 'enemy';
-      // enemy kills ME -> defeated; enemy kills an ALLY -> ally_defeated; our side kills an enemy -> enemy_defeated
-      const voice = ourSideScored ? 'enemyDefeated' : mineVictim ? 'defeated' : 'allyDefeated';
-      if (mineKiller) queueAnnouncement({ banner: ['SLAIN', `Bạn đã hạ ${victim} · +${RULES.killPoints}`, 'slain', 'ELIMINATION', 2000], voice, vol: .7, fallback: () => playKillSting(1) });
-      else queueAnnouncement({ voice, vol: ourSideScored ? .55 : .75 });
-    } else if (!special) {
-      if (mineKiller) queueAnnouncement({ banner: ['SLAIN', `Bạn đã hạ ${victim} · +${RULES.killPoints}`, 'slain', 'ELIMINATION', 2000], voice: 'slain', vol: .7, fallback: () => playKillSting(1) });
-      else if (victimSide !== 'enemy') queueAnnouncement({ voice: 'defeated', vol: .75 });         // an enemy kills you (or your ally)
-      else if (killerSide === 'ally') queueAnnouncement({ voice: 'slain', vol: .55 });              // your ally kills an enemy
-      else queueAnnouncement({ banner: ['SLAIN', `${killer} đã hạ ${victim}`, 'slain enemy', 'ELIMINATION', 2000], voice: 'enemyDefeated', vol: .55, fallback: () => playKillSting(1) });   // enemy kills enemy -> red SLAIN banner + enemy_defeated.mp3
-    }
-    runAnnouncements();
-  }
-
-  function pushKillFeed({ killer, victim, tier, streakTier = 0, shutdown, points, mine, firstBlood }) {
-    const root = $('kill-feed'); if (!root) return;
-    const row = document.createElement('div');
-    row.className = `kf-item${mine ? ' mine' : ''}`;
-    const killerEl = document.createElement('span'); killerEl.className = 'kf-name'; killerEl.textContent = killer; killerEl.style.color = colorOfTank(killer);
-    const icon = document.createElement('span'); icon.className = 'kf-icon'; icon.textContent = '⚔';
-    const victimEl = document.createElement('span'); victimEl.className = 'kf-name'; victimEl.textContent = victim; victimEl.style.color = colorOfTank(victim);
-    row.append(killerEl, icon, victimEl);
-    if (firstBlood) { const tag = document.createElement('em'); tag.className = 'kf-tag shutdown'; tag.textContent = 'FIRST BLOOD'; row.append(tag); }
-    if (tier >= 2) { const tag = document.createElement('em'); tag.className = 'kf-tag'; tag.textContent = MULTI_TITLES[tier]; row.append(tag); }
-    if (streakTier) { const tag = document.createElement('em'); tag.className = 'kf-tag'; tag.textContent = STREAK_TITLES[streakTier]; row.append(tag); }
-    if (shutdown) { const tag = document.createElement('em'); tag.className = 'kf-tag shutdown'; tag.textContent = 'SHUTDOWN'; row.append(tag); }
-    const pts = document.createElement('span'); pts.className = 'kf-points'; pts.textContent = `+${points}`; row.append(pts);
-    root.append(row);
-    while (root.children.length > 12) root.firstElementChild.remove();
-    setTimeout(() => row.remove(), 7000);
-  }
-
-  function showKillBanner(title, subtitle, cls, kicker = 'ELIMINATION', ms = 2600) {
-    const el = $('kill-banner'); if (!el) return;
-    setText('kill-banner-title', title);
-    setText('kill-banner-subtitle', subtitle);
-    const kickerEl = el.querySelector('.kill-banner-kicker'); if (kickerEl) kickerEl.textContent = kicker;
-    el.className = `kill-banner ${cls}`;
-    el.hidden = false;
-    void el.offsetWidth;
-    el.classList.add('kill-banner-pop');
-    clearTimeout(bannerTimer);
-    bannerTimer = setTimeout(() => { el.hidden = true; }, ms);
-  }
-
-  function showTabScoreboard(show) {
-    tabHeld = show;
-    const el = $('tab-scoreboard'); if (!el) return;
-    el.hidden = !show;
-    if (show && latestSnapshot) renderTabScoreboard(latestSnapshot);
-  }
-
-  function renderTabScoreboard(snapshot) {
-    const body = $('tab-scoreboard-body'); if (!body) return;
-    const entries = scoreboardEntries(snapshot);
-    body.innerHTML = '';
-    if (!entries.length) { body.innerHTML = '<tr><td colspan="6">Đang chờ dữ liệu…</td></tr>'; return; }
-    entries.forEach(e => {
-      const tr = document.createElement('tr'); if (isMe(e.id)) tr.className = 'me';
-      const nameCell = document.createElement('td');
-      const dot = document.createElement('span'); dot.className = 'tab-score-dot'; dot.style.color = COLORS[e.color] || '#c7f36b'; dot.style.background = 'currentColor';
-      nameCell.append(dot, document.createTextNode(e.id + (isMe(e.id) ? ' (BẠN)' : '')));
-      const status = !e.alive ? (e.team >= 0 ? 'ĐÃ HẠ' : `HỒI SINH ${e.respawn > 0 ? e.respawn.toFixed(1) + 's' : ''}`.trim()) : e.invuln > 0 ? 'BẤT TỬ' : 'SỐNG';
-      [e.kills, e.deaths, e.points, e.streak, status].forEach(value => {
-        const td = document.createElement('td'); td.textContent = String(value); tr.append(td);
-      });
-      tr.prepend(nameCell);
-      body.append(tr);
-    });
-  }
-
-  function showOverlay(title, text, buttonText, action) { $('overlay-title').textContent = title; $('overlay-text').textContent = text; $('overlay-action').textContent = buttonText; roundOverlayAction = action; $('arena-overlay').hidden = false; }
-  function hideOverlay() { $('arena-overlay').hidden = true; roundOverlayAction = null; }
-
-  // ---------------------------------------------------------------- input
-
+  });
+  document.addEventListener('keyup',e=>setKey(e.key,false));
+  window.addEventListener('blur',()=>{input.up=input.down=input.left=input.right=input.fire=false;});
   function getCurrentWorldDimensions() {
-    if (mode === 'online' && latestSnapshot) {
-      const world = readField(latestSnapshot, 'wsMaze');
-      if (world) return { w: Number(readField(world, 'mazeWidth') || WORLD_W), h: Number(readField(world, 'mazeHeight') || WORLD_H) };
-    }
-    return { w: WORLD_W, h: WORLD_H };
+    const world = (mode === 'online' && latestSnapshot) ? readField(latestSnapshot, 'wsMaze') : maze;
+    const w = Number(readField(world, 'mazeWidth') || WORLD_W);
+    const h = Number(readField(world, 'mazeHeight') || WORLD_H);
+    return { w, h };
   }
 
-  function updateCurrentInput() {
-    if (mode !== 'online' || !wsReady || !loggedIn || screenName !== 'game') return;
-    const snapshot = latestSnapshot; if (!snapshot) return;
-    setMovementSound(input.up || input.down || input.left || input.right);
-    const tanks = readField(snapshot, 'wsTanks') || []; const me = tanks.find(t => readField(t, 'tankId') === username) || tanks[0]; if (!me) return;
-    const pos = readField(me, 'tankPos') || { vx: 0, vy: 0 };
-    const dims = getCurrentWorldDimensions();
-    const mouseWorldX = input.mouseX, mouseWorldY = dims.h - input.mouseY;
-    const angle = Math.atan2(mouseWorldY - Number(readField(pos, 'vy') || 0), mouseWorldX - Number(readField(pos, 'vx') || 0));
-    sendMessage('CPlayerInput', { piMoveUp: input.up, piMoveDown: input.down, piMoveLeft: input.left, piMoveRight: input.right, piMouseAngle: angle, piFire: input.fire, piReload: input.reloadPulse });
-    input.reloadPulse = false;
-  }
-  function startInputSender() { stopInputSender(); inputTimer = window.setInterval(updateCurrentInput, 1000 / 30); }
-  function stopInputSender() { if (inputTimer !== null) { clearInterval(inputTimer); inputTimer = null; } }
-
-  function setKey(key, pressed) {
-    const k = key.toLowerCase();
-    if (['w', 'arrowup'].includes(k)) input.up = pressed;
-    else if (['s', 'arrowdown'].includes(k)) input.down = pressed;
-    else if (['a', 'arrowleft'].includes(k)) input.left = pressed;
-    else if (['d', 'arrowright'].includes(k)) input.right = pressed;
-    else if (k === ' ' || k === 'space') input.fire = pressed;
-  }
-  function resetInput() {
-    input.up = input.down = input.left = input.right = input.fire = false;
-    input.reloadRequest = false;
-    document.body.classList.remove('mouse-pressed');
-    setMovementSound(false);
-  }
-
-  // R: reload the 6-round magazine. Offline uses the local simulator; online sends piReload to the server.
-  function requestReload() {
-    if (mode === 'offline') input.reloadRequest = true;
-    else if (mode === 'online') input.reloadPulse = true;
-  }
-
-  document.addEventListener('keydown', e => {
-    if (screenName !== 'game') return;
-    if (e.key === 'Tab') { e.preventDefault(); if (!e.repeat) showTabScoreboard(true); return; }
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
-    if (e.key === 'Escape') { e.preventDefault(); togglePauseModal(); return; }
-    if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey) { if (!e.repeat && !isPaused) requestReload(); return; }
-    setKey(e.key, true);
-  });
-  document.addEventListener('keyup', e => {
-    if (e.key === 'Tab') { showTabScoreboard(false); return; }
-    setKey(e.key, false);
-  });
-  window.addEventListener('blur', () => { resetInput(); showTabScoreboard(false); });
-
-  function pointerToWorld(clientX, clientY) {
+  canvas.addEventListener('mousemove', e => {
     const rect = canvas.getBoundingClientRect();
     const dims = getCurrentWorldDimensions();
-    input.mouseX = (clientX - rect.left) / rect.width * dims.w;
-    input.mouseY = (clientY - rect.top) / rect.height * dims.h;
-  }
-  canvas.addEventListener('mousemove', e => pointerToWorld(e.clientX, e.clientY));
-  canvas.addEventListener('mousedown', e => {
-    if (e.button === 0) { canvas.focus({ preventScroll: true }); input.fire = true; document.body.classList.add('mouse-pressed'); }
+    input.mouseX = (e.clientX - rect.left) / rect.width * dims.w;
+    input.mouseY = (e.clientY - rect.top) / rect.height * dims.h;
   });
-  window.addEventListener('mouseup', e => { if (e.button === 0) { input.fire = false; document.body.classList.remove('mouse-pressed'); } });
+  canvas.addEventListener('mousedown', e => { if (e.button === 0) { input.fire = true; } });
+  window.addEventListener('mouseup', e => { if (e.button === 0) input.fire = false; });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-  // Touch screen support for responsive mobile/tablet play
-  function handleTouch(e) {
-    if (!e.touches.length) return;
-    pointerToWorld(e.touches[0].clientX, e.touches[0].clientY);
-  }
-  canvas.addEventListener('touchstart', e => { e.preventDefault(); handleTouch(e); input.fire = true; }, { passive: false });
-  canvas.addEventListener('touchmove', e => { e.preventDefault(); handleTouch(e); }, { passive: false });
-  window.addEventListener('touchend', () => { input.fire = false; });
-
-  // ---------------------------------------------------------------- pause / leave
-
+  let isPaused = false;
   function showPauseModal() {
     if (screenName !== 'game') return;
     const modal = $('pause-modal');
@@ -2791,8 +2084,9 @@
   }
   function hidePauseModal() {
     const modal = $('pause-modal');
+    if (!modal) return;
     isPaused = false;
-    if (modal) modal.hidden = true;
+    modal.hidden = true;
   }
   function togglePauseModal() {
     if (screenName !== 'game') return;
@@ -2809,27 +2103,87 @@
     hidePauseModal();
     hideOverlay();
     if (mode === 'online') {
-      // SRoomLeft from the server moves the player back to the lobby.
       if (activeRoom) sendMessage('CLeaveRoom');
-      else showScreen('lobby');
+      closeSocket(false);
+      showScreen('lobby');
     } else {
-      setMovementSound(false);
-      leaveGameplayFullscreen();
       localGame = null;
-      localMap = null;
-      mode = 'none';
       showScreen('home');
     }
   }
 
-  function quitGame() {
-    window.close();
-    window.setTimeout(() => { if (!window.closed) window.location.replace('about:blank'); }, 120);
+  $('online-button').addEventListener('click',connectOnline);
+  $('player-name').addEventListener('keydown',e=>{if(e.key==='Enter')connectOnline();});
+  $('server-url').addEventListener('keydown',e=>{if(e.key==='Enter')connectOnline();});
+  $('practice-button').addEventListener('click',startOffline);
+  $('brand-home').addEventListener('click',e=>{e.preventDefault();if(screenName==='game')togglePauseModal();else showScreen('home');});
+  $('refresh-rooms').addEventListener('click',()=>{setError('lobby-error','');sendMessage('CListRooms');});
+  $('create-button').addEventListener('click',createRoom);
+  $('join-button').addEventListener('click',joinRoom);
+  $('join-id').addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);});
+  $('join-id').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom();});
+  $('start-button').addEventListener('click',()=>{setError('lobby-error','');if(!isHost){setError('lobby-error','Chỉ chủ phòng mới có thể bắt đầu.');return;}sendMessage('CStartGame');});
+  $('leave-room').addEventListener('click',()=>{if(wsReady&&activeRoom)sendMessage('CLeaveRoom');else{activeRoom=null;showScreen('lobby');}});
+  $('lobby-back').addEventListener('click',()=>{if(activeRoom)sendMessage('CLeaveRoom');else{closeSocket();showScreen('home');}});
+  $('pause-open-btn')?.addEventListener('click',togglePauseModal);
+  $('pause-resume-btn')?.addEventListener('click',hidePauseModal);
+  $('pause-leave-btn')?.addEventListener('click',leaveCurrentMatch);
+  $('pause-sound-btn')?.addEventListener('click',()=>{
+    soundEnabled=!soundEnabled;
+    $('sound-toggle').style.color=soundEnabled?'var(--lime)':'var(--muted)';
+    if(soundEnabled){SoundFX.init();SoundFX.pickup();}
+    updatePauseSoundLabel();
+  });
+  $('pause-fullscreen-btn')?.addEventListener('click',()=>{
+    if(!document.fullscreenElement){document.documentElement.requestFullscreen().catch(()=>{});}
+    else{document.exitFullscreen().catch(()=>{});}
+  });
+  $('exit-game')?.addEventListener('click',togglePauseModal);
+  $('copy-room-code').addEventListener('click',async()=>{const code=$('room-code').textContent;try{await navigator.clipboard.writeText(code);$('copy-room-code').textContent='✓';setTimeout(()=>$('copy-room-code').textContent='⧉',900);}catch(_){$('join-id').value=code;}});
+  $('overlay-action').addEventListener('click',()=>{const action=roundOverlayAction;hideOverlay();if(action)action();});
+  $('sound-toggle').addEventListener('click',()=>{
+    soundEnabled=!soundEnabled;
+    $('sound-toggle').style.color=soundEnabled?'var(--lime)':'var(--muted)';
+    if(soundEnabled){
+      SoundFX.init();
+      SoundFX.pickup();
+    }
+    updatePauseSoundLabel();
+  });
+
+  function pointerToWorld(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const dims = getCurrentWorldDimensions();
+    input.mouseX = (clientX - rect.left) / rect.width * dims.w;
+    input.mouseY = (clientY - rect.top) / rect.height * dims.h;
   }
+  canvas.addEventListener('mousemove', e => pointerToWorld(e.clientX, e.clientY));
+  canvas.addEventListener('mousedown', e => {
+    if (e.button === 0) { canvas.focus({ preventScroll: true }); input.fire = true; document.body.classList.add('mouse-pressed'); }
+  });
+  window.addEventListener('mouseup', e => { if (e.button === 0) { input.fire = false; document.body.classList.remove('mouse-pressed'); } });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-  // ---------------------------------------------------------------- canvas sizing
+  // Start/stop the network input sender when the online game view is entered.
+  const originalShowScreen=showScreen;
+  showScreen=function(name){
+    originalShowScreen(name);
+    if(name==='game'){
+      document.body.classList.add('in-game');
+      hidePauseModal();
+      resizeCanvasBacking();
+      setTimeout(resizeCanvasBacking,50);
+      setTimeout(resizeCanvasBacking,180);
+      if(mode==='online')startInputSender();
+    } else {
+      document.body.classList.remove('in-game');
+      hidePauseModal();
+      stopInputSender();
+      resizeCanvasBacking();
+    }
+  };
 
-  // Keep layout responsive by sizing the canvas backing buffer to the screen resolution.
+  // Keep layout responsive by dynamically sizing canvas backing buffer to screen resolution.
   function resizeCanvasBacking() {
     const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
@@ -2844,161 +2198,17 @@
   }
   window.addEventListener('resize', resizeCanvasBacking);
   window.addEventListener('orientationchange', () => setTimeout(resizeCanvasBacking, 100));
+  resizeCanvasBacking();
 
-  // ---------------------------------------------------------------- event wiring (each handler registered once)
-
-  $('online-button').addEventListener('click', () => openTankSelect('connect'));
-  $('practice-button').addEventListener('click', () => openTankSelect('offline'));
-  $('player-name').addEventListener('keydown', e => { if (e.key === 'Enter') openTankSelect('connect'); });
-  $('server-url').addEventListener('keydown', e => { if (e.key === 'Enter') openTankSelect('connect'); });
-  $('main-exit').addEventListener('click', quitGame);
-  $('map-back').addEventListener('click', () => showScreen('home'));
-  const MATCH_TIME_LIMITS = [1, 30];   // minutes allowed in the free-form box (free-for-all match)
-  const TEAM_TIME_LIMITS = [1, 10];    // minutes allowed in the free-form box (one team round)
-  const MATCH_CHOICES = [180, 300, 420, 600];        // free-for-all: 3 / 5 / 7 / 10 minutes
-  const TEAM_ROUND_CHOICES = [90, 120, 180, 300];    // team mode, per round: 1:30 / 2 / 3 / 5 minutes
-  function refreshBotSetup() {
-    document.querySelectorAll('[data-difficulty]').forEach(button => button.classList.toggle('active', button.dataset.difficulty === botSettings.difficulty));
-    document.querySelectorAll('[data-bots]').forEach(button => button.classList.toggle('active', Number(button.dataset.bots) === botSettings.bots));
-    document.querySelectorAll('[data-team]').forEach(button => button.classList.toggle('active', Number(button.dataset.team) === botSettings.teamSize));
-    const team = botSettings.teamSize >= 2, size = botSettings.teamSize;
-    const botsGroup = $('setup-bots-group'); if (botsGroup) botsGroup.hidden = team;
-    // Match length: whole match in free-for-all, length of each round in team mode.
-    const timeOptions = team ? TEAM_ROUND_CHOICES : MATCH_CHOICES, current = team ? botSettings.teamRoundSeconds : botSettings.matchSeconds;
-    setText('setup-time-label', team ? 'THỜI GIAN MỖI VÁN' : 'THỜI GIAN TRẬN');
-    const timeRoot = $('setup-time-options');
-    if (timeRoot) {
-      timeRoot.innerHTML = '';
-      timeOptions.forEach(seconds => {
-        const chip = document.createElement('button');
-        chip.type = 'button'; chip.className = `setup-chip${seconds === current ? ' active' : ''}`; chip.dataset.seconds = String(seconds);
-        chip.textContent = seconds % 60 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${seconds / 60} PHÚT`;
-        chip.addEventListener('click', () => { if (botSettings.teamSize >= 2) botSettings.teamRoundSeconds = seconds; else botSettings.matchSeconds = seconds; refreshBotSetup(); });
-        timeRoot.append(chip);
-      });
-    }
-    const roundsGroup = $('setup-rounds-group');
-    if (roundsGroup) {
-      roundsGroup.hidden = !team;
-      const roundsRoot = $('setup-rounds-options');
-      if (team && roundsRoot) {
-        roundsRoot.innerHTML = '';
-        [3, 5, 7, 9].forEach(n => {
-          const chip = document.createElement('button');
-          chip.type = 'button'; chip.className = `setup-chip${n === botSettings.teamRounds ? ' active' : ''}`; chip.dataset.rounds = String(n); chip.textContent = String(n);
-          chip.addEventListener('click', () => { botSettings.teamRounds = n; refreshBotSetup(); });
-          roundsRoot.append(chip);
-        });
-        const roundsInput = $('setup-rounds-input');
-        if (roundsInput && document.activeElement !== roundsInput) roundsInput.value = String(botSettings.teamRounds);
-        setText('setup-rounds-need', `THẮNG KHI ĐẠT ${Math.floor(botSettings.teamRounds / 2) + 1} VÁN`);
-      }
-    }
-    const timeInput = $('setup-time-input');
-    if (timeInput) {
-      const [lo, hi] = team ? TEAM_TIME_LIMITS : MATCH_TIME_LIMITS;
-      timeInput.min = String(lo); timeInput.max = String(hi);
-      if (document.activeElement !== timeInput) timeInput.value = String(Math.round(current / 60 * 100) / 100);   // don't overwrite while typing
-    }
-    setText('setup-hint', team
-      ? `${size}V${size}: bạn + ${size - 1} bot đồng đội (xanh) đấu ${size} bot địch (đỏ). ${botSettings.teamRounds} ván (đội nào thắng ${Math.floor(botSettings.teamRounds / 2) + 1} ván trước là thắng cả trận), mỗi ván là tử chiến: bị hạ là chờ đến ván sau, hết người là thua ván. Đội thắng nhiều ván nhất thắng trận. ${BOT_LEVELS[botSettings.difficulty].hint}`
-      : BOT_LEVELS[botSettings.difficulty].hint);
-  }
-  (function bindRoundsInput() {
-    const input = $('setup-rounds-input'); if (!input) return;
-    const apply = final => {
-      const n = parseInt(input.value, 10);
-      if (!Number.isFinite(n)) { if (final) refreshBotSetup(); return; }
-      if (!final && (n < 1 || n > 20)) return;   // wait until the typed value is valid
-      botSettings.teamRounds = clamp(n, 1, 20);
-      setText('setup-rounds-need', `THẮNG KHI ĐẠT ${Math.floor(botSettings.teamRounds / 2) + 1} VÁN`);
-      document.querySelectorAll('#setup-rounds-options .setup-chip').forEach(chip => chip.classList.toggle('active', Number(chip.dataset.rounds) === botSettings.teamRounds));
-      if (final) { input.blur(); refreshBotSetup(); }
-    };
-    input.addEventListener('input', () => apply(false));
-    input.addEventListener('change', () => apply(true));
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(true); } e.stopPropagation(); });
-  })();
-  (function bindTimeInput() {
-    const input = $('setup-time-input'); if (!input) return;
-    const apply = final => {
-      const team = botSettings.teamSize >= 2, [lo, hi] = team ? TEAM_TIME_LIMITS : MATCH_TIME_LIMITS;
-      const minutes = parseFloat(String(input.value).replace(',', '.'));
-      if (!Number.isFinite(minutes)) { if (final) refreshBotSetup(); return; }
-      if (!final && (minutes < lo || minutes > hi)) return;   // wait until the typed value is valid
-      const seconds = Math.round(clamp(minutes, lo, hi) * 60);
-      if (team) botSettings.teamRoundSeconds = seconds; else botSettings.matchSeconds = seconds;
-      if (final) input.blur();
-      document.querySelectorAll('#setup-time-options .setup-chip').forEach(chip => chip.classList.toggle('active', Number(chip.dataset.seconds) === seconds));
-      if (final) refreshBotSetup();
-    };
-    input.addEventListener('input', () => apply(false));
-    input.addEventListener('change', () => apply(true));
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(true); } e.stopPropagation(); });
-  })();
-  document.querySelectorAll('[data-difficulty]').forEach(button => button.addEventListener('click', () => {
-    if (BOT_LEVELS[button.dataset.difficulty]) botSettings.difficulty = button.dataset.difficulty;
-    refreshBotSetup();
-  }));
-  document.querySelectorAll('[data-bots]').forEach(button => button.addEventListener('click', () => {
-    botSettings.bots = Math.max(1, Math.min(MAX_BOTS, Number(button.dataset.bots) || 3));
-    refreshBotSetup();
-  }));
-  document.querySelectorAll('[data-team]').forEach(button => button.addEventListener('click', () => {
-    botSettings.teamSize = Math.max(0, Math.min(5, Number(button.dataset.team) || 0));
-    refreshBotSetup();
-  }));
-  document.querySelectorAll('[data-map]').forEach(button => button.addEventListener('click', () => chooseOfflineMap(button.dataset.map)));
-  $('tank-select-back').addEventListener('click', closeTankSelect);
-  $('tank-confirm').addEventListener('click', confirmTankSelection);
-  document.querySelectorAll('[data-hull]').forEach(button => button.addEventListener('click', () => {
-    selectedHullId = button.dataset.hull || '05';
-    refreshTankAssembly();
-  }));
-  document.querySelectorAll('[data-gun]').forEach(button => button.addEventListener('click', () => {
-    selectedGunId = button.dataset.gun || '05';
-    refreshTankAssembly();
-  }));
-  $('results-exit').addEventListener('click', exitResultsToHome);
-  $('results-back').addEventListener('click', backToBattleRoom);
-  $('brand-home').addEventListener('click', e => { e.preventDefault(); if (screenName === 'game') togglePauseModal(); else showScreen('home'); });
-  $('refresh-rooms').addEventListener('click', () => { setError('lobby-error', ''); sendMessage('CListRooms'); });
-  $('create-button').addEventListener('click', createRoom);
-  $('create-test-button').addEventListener('click', () => openTankSelect('offline'));
-  $('join-button').addEventListener('click', joinRoom);
-  $('join-id').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); });
-  $('join-id').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
-  $('start-button').addEventListener('click', () => {
-    unlockAudio(); setError('lobby-error', '');
-    if (!isHost) { setError('lobby-error', 'Chỉ chủ phòng mới có thể bắt đầu.'); return; }
-    enterGameplayFullscreen();
-    sendMessage('CStartGame');
-  });
-  $('leave-room').addEventListener('click', () => { if (wsReady && activeRoom) sendMessage('CLeaveRoom'); else { activeRoom = null; showScreen('lobby'); } });
-  $('lobby-back').addEventListener('click', () => { if (activeRoom) sendMessage('CLeaveRoom'); else { closeSocket(); showScreen('home'); } });
-  $('copy-room-code').addEventListener('click', async () => {
-    const code = $('room-code').textContent;
-    try { await navigator.clipboard.writeText(code); $('copy-room-code').textContent = '✓'; setTimeout(() => $('copy-room-code').textContent = '⧉', 900); }
-    catch (_) { $('join-id').value = code; }
-  });
-  $('overlay-action').addEventListener('click', () => { const action = roundOverlayAction; hideOverlay(); if (action) action(); });
-  document.addEventListener('pointerdown', unlockAudio, { once: true });
-  document.addEventListener('keydown', unlockAudio, { once: true });
-  document.addEventListener('click', event => { if (event.target.closest('button') && event.target.closest('#sound-toggle') === null) playSfx('click', .24); });
-  $('sound-toggle').addEventListener('click', toggleSound);
-  $('pause-open-btn')?.addEventListener('click', togglePauseModal);
-  $('pause-resume-btn')?.addEventListener('click', hidePauseModal);
-  $('pause-leave-btn')?.addEventListener('click', leaveCurrentMatch);
-  $('pause-sound-btn')?.addEventListener('click', toggleSound);
-  $('pause-fullscreen-btn')?.addEventListener('click', () => {
-    if (!document.fullscreenElement) enterGameplayFullscreen(); else leaveGameplayFullscreen();
-  });
-  $('exit-game')?.addEventListener('click', togglePauseModal);
-
+  // Fullscreen toggle support
   const fullscreenBtn = $('fullscreen-button');
   if (fullscreenBtn) {
     fullscreenBtn.addEventListener('click', () => {
-      if (!document.fullscreenElement) enterGameplayFullscreen(); else leaveGameplayFullscreen();
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
     });
     document.addEventListener('fullscreenchange', () => {
       fullscreenBtn.textContent = document.fullscreenElement ? 'THU NHỎ 🗗' : '⛶ TOÀN MÀN HÌNH';
@@ -3006,25 +2216,18 @@
     });
   }
 
-  const volumeSlider = $('pause-volume');
-  if (volumeSlider) {
-    volumeSlider.value = '100';
-    const applyVolume = () => {
-      musicScale = Number(volumeSlider.value) / 100;
-      setText('pause-volume-value', `${volumeSlider.value}%`);
-      applyMusicVolume();
-    };
-    volumeSlider.addEventListener('input', applyVolume);
-    applyVolume();
+  // Touch screen support for responsive mobile/tablet play
+  function handleTouch(e) {
+    if (!e.touches.length) return;
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const dims = getCurrentWorldDimensions();
+    input.mouseX = (touch.clientX - rect.left) / rect.width * dims.w;
+    input.mouseY = (touch.clientY - rect.top) / rect.height * dims.h;
   }
-
-  // Small defaults are remembered locally for the next session.
-  $('player-name').value = localStorage.getItem('tankwar-name') || '';
-  $('server-url').value = localStorage.getItem('tankwar-server') || 'ws://localhost:8080';
-  refreshBotSetup();
-  refreshTankAssembly();
-  refreshSoundToggle();
-  resizeCanvasBacking();
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); handleTouch(e); input.fire = true; }, { passive: false });
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); handleTouch(e); }, { passive: false });
+  window.addEventListener('touchend', () => { input.fire = false; });
 
   // Expose a small protocol diagnostic through the console for coursework debugging.
   window.TankWarClient = { get mode() { return mode; }, get connected() { return wsReady; }, get room() { return activeRoom; }, send: sendMessage };
